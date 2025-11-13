@@ -8,17 +8,25 @@ The cache integrates with PostgreSQL using reactive queries and real-time synchr
 **Columns Used**:
 - `id` (bigint): Primary key
 - `feide_email` (varchar): Student email address
+- `school_id` (bigint): School FK (used for tracking)
 
-**Cache Mapping**: → `studentsById`
+**Cache Mapping**:
+- → `studentsById` (id → email mapping, simple)
+- → `CacheManager.studentsByEmail` (email → Student object, for tracking)
 
 **Query**:
 ```sql
-SELECT id, feide_email
+SELECT id, feide_email, school_id
 FROM students
 WHERE feide_email IS NOT NULL
 ```
 
 **Update Detection**: LISTEN/NOTIFY on `students_changes` channel
+
+**Note**: The `Student` model object (with id, email, schoolId) is used by the tracking system to determine which rules apply to a student.
+
+**Index for Tracking** (see `database/003_add_tracking_indexes.sql`):
+- `idx_students_email` - Fast student lookup by email
 
 ---
 
@@ -78,10 +86,12 @@ WHERE start_time <= CURRENT_DATE AND end_time >= CURRENT_DATE
 - `teacher_session_id` (bigint): Teacher session FK
 - `grade` (integer): Grade level
 - `profile_id` (bigint): Assigned profile
-- `is_active` (boolean): Active flag
-- `percentage` (double): Completion percentage
+- `is_active` (boolean): **Tracking aggregate** - Session-level active flag (80% of students must be active)
+- `percentage` (double): **Tracking aggregate** - Average attendance percentage across all students
 
 **Cache Mapping**: → `sessionsById`, `sessionsByEmail`, `sessionsByProfile`
+
+**Tracking Mapping**: → `TrackingManager.sessionTrackers` (in-memory until session ends)
 
 **Query** (loads only today's sessions):
 ```sql
@@ -93,6 +103,25 @@ WHERE DATE(start_time) = CURRENT_DATE
 ```
 
 **Update Detection**: LISTEN/NOTIFY on `sessions_changes` channel
+
+**Tracking Persistence**:
+- `is_active` and `percentage` are written by `TrackingManager.persistSessionTracking()`
+- Persisted when session ends (during cleanup, every 5 minutes)
+- Values are aggregate calculations, not per-student:
+  ```java
+  // Average percentage across all students
+  percentage = avg(student1.percentage, student2.percentage, ...)
+
+  // True if 80% of students are individually active
+  is_active = (activeStudents / totalStudents) > 0.8
+  ```
+
+**Indexes for Tracking Queries** (see `database/003_add_tracking_indexes.sql`):
+- `idx_sessions_teacher_id` - Teacher dashboard queries
+- `idx_sessions_student_id` - Student lookup
+- `idx_sessions_active_time` - Active session filtering
+- `idx_sessions_is_active` - Status queries
+- `idx_sessions_teacher_active` - Teacher + active session composite
 
 ---
 

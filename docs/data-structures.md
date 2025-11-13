@@ -248,9 +248,131 @@ rulesByScopeAndValue = {
 
 ---
 
+## Tracking System Data Structures
+
+### 8. sessionTrackers (TrackingManager)
+**Type**: `ConcurrentHashMap<Long, SessionTracker>`
+
+**Purpose**: Track real-time student activity in active sessions
+
+**Location**: `TrackingManager.java:38`
+
+**Key**: Session ID
+**Value**: SessionTracker object containing:
+- Session metadata (start/end times, duration)
+- Map of StudentMinuteTrackers (per student in session)
+- Real-time attendance statistics
+
+**Example**:
+```java
+SessionTracker tracker = sessionTrackers.get(123456L);
+Map<String, AttendanceStats> stats = tracker.calculateStats();
+// Returns real-time stats for all students in session
+```
+
+**Lifecycle**:
+- Created when first heartbeat received for session
+- Updated every minute during rotation
+- Persisted to database when session ends
+- Removed from memory during cleanup (every 5 minutes)
+
+---
+
+### 9. ruleTrackers (TrackingManager)
+**Type**: `ConcurrentHashMap<String, RuleTracker>`
+
+**Purpose**: Track student activity for rule-based contexts (without sessions)
+
+**Location**: `TrackingManager.java:39`
+
+**Key**: Rule context key (format: `"scope:scopeValue"`, e.g., `"school:1"`)
+**Value**: RuleTracker object containing:
+- Rule metadata (scope, scopeValue, profileId)
+- Map of StudentMinuteTrackers (per student matching rule)
+- School ID for indexing
+
+**Example**:
+```java
+RuleTracker tracker = ruleTrackers.get("school:1");
+Map<String, AttendanceStats> stats = tracker.calculateStats();
+// Returns stats for all students in school 1 (without active session)
+```
+
+**Context Key Examples**:
+- `"school:1"` - All students in school 1
+- `"grade:8"` - All 8th grade students
+- `"class:42"` - All students in class 42
+
+**Lifecycle**:
+- Created when first heartbeat received matching rule (and no session)
+- Updated every minute during rotation
+- Removed if no activity for 30 minutes (stale cleanup)
+
+---
+
+### 10. studentEmailToSessionIds (TrackingManager)
+**Type**: `ConcurrentHashMap<String, Set<Long>>`
+
+**Purpose**: Index sessions by student email for fast lookup
+
+**Location**: `TrackingManager.java:42`
+
+**Key**: Student email
+**Value**: Set of session IDs being tracked for that student
+
+**Example**:
+```java
+Set<Long> sessionIds = studentEmailToSessionIds.get("student@test.com");
+// Returns {123456, 123457} if student is tracked in 2 sessions
+```
+
+**Use Case**: Avoid full table scan when looking up sessions for a student
+
+---
+
+### 11. teacherIdToSessionIds (TrackingManager)
+**Type**: `ConcurrentHashMap<Long, Set<Long>>`
+
+**Purpose**: Index sessions by teacher ID for fast lookup
+
+**Location**: `TrackingManager.java:43`
+
+**Key**: Teacher ID
+**Value**: Set of session IDs owned by that teacher
+
+**Example**:
+```java
+Set<Long> sessionIds = teacherIdToSessionIds.get(42L);
+// Returns all session IDs for teacher 42
+```
+
+**Use Case**: Teacher dashboard showing all their active sessions
+
+---
+
+### 12. schoolIdToRuleContextKeys (TrackingManager)
+**Type**: `ConcurrentHashMap<Long, Set<String>>`
+
+**Purpose**: Index rule contexts by school ID for fast lookup
+
+**Location**: `TrackingManager.java:44`
+
+**Key**: School ID
+**Value**: Set of rule context keys for that school
+
+**Example**:
+```java
+Set<String> contextKeys = schoolIdToRuleContextKeys.get(1L);
+// Returns {"school:1", "grade:8", "class:42"} for school 1
+```
+
+**Use Case**: School-wide tracking queries and cleanup
+
+---
+
 ## Memory Footprint
 
-**Current Stats (Example)**:
+**Cache System (Example)**:
 ```
 studentsById:        174 entries  (~14 KB)
 profilesById:        10 entries   (~2 KB)
@@ -260,9 +382,43 @@ sessionsByEmail:     72 entries   (~30 KB)
 sessionsByProfile:   1 entries    (~0.5 KB)
 rulesByScopeAndValue: 1 entries   (~0.5 KB)
 
-Total: ~77 KB
+Subtotal: ~77 KB
+```
+
+**Tracking System (Example)**:
+```
+sessionTrackers:           5 sessions × 1.6 KB   (~8 KB)
+ruleTrackers:              2 contexts × 0.5 KB   (~1 KB)
+studentEmailToSessionIds:  12 students           (~0.5 KB)
+teacherIdToSessionIds:     3 teachers            (~0.2 KB)
+schoolIdToRuleContextKeys: 1 school              (~0.1 KB)
+
+Subtotal: ~10 KB
+```
+
+**Total Memory Usage: ~87 KB**
+
+**Scaling Example**:
+```
+100 active sessions × 30 students each:
+- sessionTrackers: 100 × 1.6 KB = 160 KB
+- Indexes: ~5 KB
+Total: ~165 KB
+
+Very memory efficient due to:
+- Binary counters (0 or 1) in history
+- Fixed 4-minute rolling window
+- Automatic cleanup of ended sessions
 ```
 
 ## Thread Safety
 
 All hash maps use `ConcurrentHashMap` for thread-safe operations without explicit locking. Updates are atomic at the entry level.
+
+**Tracking System Thread Safety**:
+- `sessionTrackers` / `ruleTrackers`: `ConcurrentHashMap`
+- `StudentMinuteTracker.currentMinuteCounter`: `AtomicInteger`
+- `StudentMinuteTracker.history`: `ConcurrentLinkedDeque`
+- All index sets: `ConcurrentHashMap.newKeySet()`
+
+Multiple threads can record heartbeats concurrently without data corruption or lost updates.
