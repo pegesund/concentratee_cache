@@ -112,11 +112,11 @@ public class Main {
             @QueryParam("expand") @DefaultValue("true") boolean expand) {
         var profileIds = cacheManager.getActiveProfilesForStudent(email);
 
-        if (profileIds.isEmpty()) {
-            return "{\"email\":\"" + email + "\",\"profiles\":[]}";
-        }
-
         if (!expand) {
+            // Return just the IDs (even if empty)
+            if (profileIds.isEmpty()) {
+                return "{\"email\":\"" + email + "\",\"profileIds\":[]}";
+            }
             // Return just the IDs
             StringBuilder sb = new StringBuilder();
             sb.append("{\"email\":\"").append(email).append("\",\"profileIds\":[");
@@ -130,7 +130,11 @@ public class Main {
             return sb.toString();
         }
 
-        // Expand mode - return full profile details
+        // Expand mode - return full profile details (default)
+        if (profileIds.isEmpty()) {
+            return "{\"email\":\"" + email + "\",\"profiles\":[]}";
+        }
+
         StringBuilder sb = new StringBuilder();
         sb.append("{\"email\":\"").append(email).append("\",\"profiles\":[");
         boolean first = true;
