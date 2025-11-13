@@ -29,6 +29,9 @@ public class Main {
     @Inject
     CacheManager cacheManager;
 
+    @Inject
+    org.concentratee.cache.tracking.TrackingManager trackingManager;
+
     void onStart(@Observes StartupEvent ev) {
         LOG.info("Application starting up...");
 
@@ -109,7 +112,14 @@ public class Main {
     @Produces(MediaType.APPLICATION_JSON)
     public String getActiveProfiles(
             @PathParam("email") String email,
-            @QueryParam("expand") @DefaultValue("true") boolean expand) {
+            @QueryParam("expand") @DefaultValue("true") boolean expand,
+            @QueryParam("track") @DefaultValue("false") boolean track) {
+
+        // Record heartbeat if tracking is enabled
+        if (track) {
+            trackingManager.recordHeartbeat(email);
+        }
+
         var profileIds = cacheManager.getActiveProfilesForStudent(email);
 
         if (!expand) {
@@ -184,5 +194,103 @@ public class Main {
     public String triggerCleanup() {
         cacheManager.cleanupStaleData();
         return "Cleanup triggered successfully";
+    }
+
+    @GET
+    @Path("/tracking/stats")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String trackingStats() {
+        var stats = trackingManager.getStats();
+        return String.format(
+            "{\"activeSessions\":%d,\"activeRuleContexts\":%d,\"indexedStudents\":%d,\"indexedTeachers\":%d,\"indexedSchools\":%d}",
+            stats.get("activeSessions"),
+            stats.get("activeRuleContexts"),
+            stats.get("indexedStudents"),
+            stats.get("indexedTeachers"),
+            stats.get("indexedSchools")
+        );
+    }
+
+    @GET
+    @Path("/tracking/session/{sessionId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String getSessionTracking(@PathParam("sessionId") Long sessionId) {
+        var stats = trackingManager.getSessionTracking(sessionId);
+        if (stats.isEmpty()) {
+            return "{\"sessionId\":" + sessionId + ",\"students\":[]}";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"sessionId\":").append(sessionId).append(",\"students\":[");
+        boolean first = true;
+        for (var entry : stats.entrySet()) {
+            if (!first) sb.append(",");
+            var stat = entry.getValue();
+            sb.append("{\"email\":\"").append(escapeJson(stat.email)).append("\",");
+            sb.append("\"isCurrentlyActive\":").append(stat.isCurrentlyActive).append(",");
+            sb.append("\"last3Minutes\":[");
+            for (int i = 0; i < stat.last3Minutes.size(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append(stat.last3Minutes.get(i));
+            }
+            sb.append("],");
+            sb.append("\"totalActiveMinutes\":").append(stat.totalActiveMinutes).append(",");
+            sb.append("\"totalMinutes\":").append(stat.totalMinutes).append(",");
+            sb.append("\"percentage\":").append(stat.percentage).append(",");
+            sb.append("\"isActive\":").append(stat.isActive);
+            sb.append("}");
+            first = false;
+        }
+        sb.append("]}");
+        return sb.toString();
+    }
+
+    @GET
+    @Path("/tracking/teacher/{teacherId}")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String getTeacherTracking(@PathParam("teacherId") Long teacherId) {
+        var sessionData = trackingManager.getTeacherSessionTracking(teacherId);
+
+        if (sessionData.isEmpty()) {
+            return "{\"teacherId\":" + teacherId + ",\"sessions\":[]}";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"teacherId\":").append(teacherId).append(",\"sessions\":[");
+
+        boolean firstSession = true;
+        for (var sessionEntry : sessionData.entrySet()) {
+            if (!firstSession) sb.append(",");
+            Long sessionId = sessionEntry.getKey();
+            var students = sessionEntry.getValue();
+
+            sb.append("{\"sessionId\":").append(sessionId).append(",\"students\":[");
+
+            boolean firstStudent = true;
+            for (var studentEntry : students.entrySet()) {
+                if (!firstStudent) sb.append(",");
+                var stat = studentEntry.getValue();
+                sb.append("{\"email\":\"").append(escapeJson(stat.email)).append("\",");
+                sb.append("\"isCurrentlyActive\":").append(stat.isCurrentlyActive).append(",");
+                sb.append("\"last3Minutes\":[");
+                for (int i = 0; i < stat.last3Minutes.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    sb.append(stat.last3Minutes.get(i));
+                }
+                sb.append("],");
+                sb.append("\"totalActiveMinutes\":").append(stat.totalActiveMinutes).append(",");
+                sb.append("\"totalMinutes\":").append(stat.totalMinutes).append(",");
+                sb.append("\"percentage\":").append(stat.percentage).append(",");
+                sb.append("\"isActive\":").append(stat.isActive);
+                sb.append("}");
+                firstStudent = false;
+            }
+
+            sb.append("]}");
+            firstSession = false;
+        }
+
+        sb.append("]}");
+        return sb.toString();
     }
 }

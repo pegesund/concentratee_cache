@@ -13,6 +13,7 @@ The cache system provides O(1) lookups for students, profiles, rules, and sessio
 - [Database Integration](database-integration.md) - PostgreSQL tables and triggers
 - [Cleanup Strategy](cleanup-strategy.md) - Stale data management
 - [API Endpoints](api-endpoints.md) - REST API reference
+- [Tracking System](tracking-system.md) - Appearance tracking, counting, and persistence
 
 ## Quick Start
 

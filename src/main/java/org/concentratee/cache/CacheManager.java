@@ -14,6 +14,7 @@ import jakarta.inject.Inject;
 import org.concentratee.cache.model.Profile;
 import org.concentratee.cache.model.Rule;
 import org.concentratee.cache.model.Session;
+import org.concentratee.cache.model.Student;
 import org.jboss.logging.Logger;
 
 import java.time.LocalDate;
@@ -945,5 +946,73 @@ public class CacheManager {
         stats.put("sessionsByProfile", sessionsByProfile.size());
         stats.put("rulesByScopeAndValue", rulesByScopeAndValue.size());
         return stats;
+    }
+
+    /**
+     * Get a Student object by email.
+     * Used for tracking purposes.
+     */
+    public Student getStudentByEmail(String email) {
+        // Find student by looking up from sessions
+        List<Session> sessions = getSessionsByEmail(email);
+        if (sessions.isEmpty()) {
+            return null;
+        }
+
+        Session session = sessions.get(0);
+        return new Student(session.studentId, email, session.schoolId);
+    }
+
+    /**
+     * Get all active rules for a student at a given time.
+     * Filters rules by scope matching student's attributes.
+     */
+    public Set<Rule> getActiveRulesForStudent(Student student, LocalDateTime now) {
+        Set<Rule> activeRules = new HashSet<>();
+
+        // Get sessions for this student to extract grade and class
+        List<Session> sessions = getSessionsByEmail(student.email);
+        Integer grade = null;
+        Long classId = null;
+
+        if (!sessions.isEmpty()) {
+            Session session = sessions.get(0);
+            grade = session.grade;
+            classId = session.classId;
+        }
+
+        // Check student-specific rules
+        if (student.id != null) {
+            List<Rule> studentRules = getRulesByScope("Student", String.valueOf(student.id));
+            studentRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+        }
+
+        // Check school-wide rules
+        if (student.schoolId != null) {
+            List<Rule> schoolRules = getRulesByScope("School", String.valueOf(student.schoolId));
+            schoolRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+        }
+
+        // Check grade-level rules
+        if (grade != null) {
+            List<Rule> gradeRules = getRulesByScope("Grade", String.valueOf(grade));
+            gradeRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+        }
+
+        // Check class-level rules
+        if (classId != null) {
+            List<Rule> classRules = getRulesByScope("Class", String.valueOf(classId));
+            classRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+        }
+
+        return activeRules;
     }
 }

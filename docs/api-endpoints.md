@@ -118,6 +118,8 @@ Get all active profiles for a student, including both session-based and rule-bas
 
 **Parameters**:
 - `email` (path): Student email address
+- `track` (query, optional): Set to `true` to record heartbeat for appearance tracking
+- `expand` (query, optional): Set to `false` to suppress profile details (default: true)
 
 **Response**: Plain text
 **Status**: 200 OK
@@ -125,6 +127,11 @@ Get all active profiles for a student, including both session-based and rule-bas
 **Example**:
 ```bash
 curl http://localhost:8082/cache/profiles/active/30091073168@test.com
+```
+
+**With tracking enabled**:
+```bash
+curl "http://localhost:8082/cache/profiles/active/30091073168@test.com?track=true"
 ```
 
 **Response**:
@@ -148,6 +155,7 @@ No active profiles for: test@example.com
    - Class-specific: `scope=Class, scopeValue={classId}`
 4. Filters by `isActiveNow()` for both sessions and rules
 5. Returns unique set of profile IDs
+6. If `track=true`, records heartbeat in tracking system
 
 **Performance**: O(1) for each rule scope lookup
 
@@ -331,6 +339,144 @@ curl http://localhost:8082/cache/cleanup
 curl http://localhost:8082/cache/stats
 
 # Sessions and rules counts should decrease if stale data existed
+```
+
+---
+
+## Tracking Endpoints
+
+### GET /tracking/stats
+
+Get tracking system statistics.
+
+**Response**: JSON
+**Status**: 200 OK
+
+**Example**:
+```bash
+curl http://localhost:8082/tracking/stats
+```
+
+**Response**:
+```json
+{
+  "activeSessions": 5,
+  "activeRuleContexts": 2,
+  "indexedStudents": 12,
+  "indexedTeachers": 3,
+  "indexedSchools": 1
+}
+```
+
+**Fields**:
+- `activeSessions`: Number of sessions currently being tracked
+- `activeRuleContexts`: Number of rule contexts being tracked
+- `indexedStudents`: Number of unique students indexed
+- `indexedTeachers`: Number of unique teachers indexed
+- `indexedSchools`: Number of unique schools indexed
+
+---
+
+### GET /tracking/session/{sessionId}
+
+Get real-time tracking data for a specific session.
+
+**Parameters**:
+- `sessionId` (path): Session ID
+
+**Response**: JSON
+**Status**: 200 OK
+
+**Example**:
+```bash
+curl http://localhost:8082/tracking/session/123456
+```
+
+**Response**:
+```json
+{
+  "sessionId": 123456,
+  "students": [
+    {
+      "email": "student@test.com",
+      "currentlyActive": true,
+      "last3Minutes": [1, 1, 0],
+      "totalActiveMinutes": 25,
+      "totalMinutes": 30,
+      "percentage": 83.33,
+      "isActive": true
+    }
+  ]
+}
+```
+
+**Empty Response** (no tracking data):
+```json
+{
+  "sessionId": 123456,
+  "students": []
+}
+```
+
+**Fields**:
+- `currentlyActive`: Was student active in most recent rotated minute
+- `last3Minutes`: Binary history [minute-1, minute-2, minute-3] (1=active, 0=inactive)
+- `totalActiveMinutes`: Total minutes with activity recorded
+- `totalMinutes`: Session duration in minutes
+- `percentage`: Attendance percentage (totalActiveMinutes / totalMinutes)
+- `isActive`: True if percentage > 80%
+
+---
+
+### GET /tracking/teacher/{teacherId}
+
+Get tracking data for all sessions owned by a teacher.
+
+**Parameters**:
+- `teacherId` (path): Teacher ID
+
+**Response**: JSON
+**Status**: 200 OK
+
+**Example**:
+```bash
+curl http://localhost:8082/tracking/teacher/42
+```
+
+**Response**:
+```json
+{
+  "teacherId": 42,
+  "sessions": [
+    {
+      "sessionId": 123456,
+      "students": [
+        {
+          "email": "student1@test.com",
+          "percentage": 83.33,
+          "isActive": true
+        },
+        {
+          "email": "student2@test.com",
+          "percentage": 45.67,
+          "isActive": false
+        }
+      ]
+    },
+    {
+      "sessionId": 123457,
+      "students": [...]
+    }
+  ]
+}
+```
+
+**No Sessions**:
+```json
+{
+  "teacherId": 42,
+  "sessions": []
+}
 ```
 
 ---

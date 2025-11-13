@@ -17,6 +17,12 @@ public class Rule {
                !now.isBefore(startTime) && !now.isAfter(endTime);
     }
 
+    // Helper method to check if rule is active at a specific time
+    public boolean isActiveNow(LocalDateTime time) {
+        return startTime != null && endTime != null &&
+               !time.isBefore(startTime) && !time.isAfter(endTime);
+    }
+
     @Override
     public String toString() {
         return "Rule{id=" + id + ", scope=" + scope + ", scopeValue=" + scopeValue +
