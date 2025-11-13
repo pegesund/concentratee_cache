@@ -241,7 +241,8 @@ public class CacheManager {
         String sql = """
             SELECT id, scope, scope_value, start_time, end_time, profile_id
             FROM rules
-            WHERE start_time <= CURRENT_DATE AND end_time >= CURRENT_DATE
+            WHERE end_time >= CURRENT_TIMESTAMP
+              AND start_time <= CURRENT_TIMESTAMP + INTERVAL '7 days'
             """;
 
         return client.query(sql).execute()
@@ -270,7 +271,8 @@ public class CacheManager {
                    teacher_id, school_id, teacher_session_id, grade, profile_id,
                    is_active, percentage
             FROM sessions
-            WHERE DATE(start_time) = CURRENT_DATE
+            WHERE DATE(start_time) >= CURRENT_DATE
+              AND DATE(start_time) <= CURRENT_DATE + INTERVAL '7 days'
             """;
 
         return client.query(sql).execute()
@@ -799,6 +801,25 @@ public class CacheManager {
                 return valueMap.isEmpty() ? null : valueMap;
             });
         }
+    }
+
+    // Scheduled job at midnight to refresh cache for new day
+    @io.quarkus.scheduler.Scheduled(cron = "0 0 0 * * ?", identity = "midnight-refresh")
+    void midnightCacheRefresh() {
+        LOG.info("🌙 Midnight cache refresh starting - loading tomorrow's sessions and rules...");
+
+        // Reload sessions and rules to pick up tomorrow's data
+        loadSessions().subscribe().with(
+            v -> LOG.info("✅ Midnight refresh: Sessions reloaded"),
+            failure -> LOG.error("❌ Midnight refresh: Failed to reload sessions", failure)
+        );
+
+        loadRules().subscribe().with(
+            v -> LOG.info("✅ Midnight refresh: Rules reloaded"),
+            failure -> LOG.error("❌ Midnight refresh: Failed to reload rules", failure)
+        );
+
+        LOG.info("🌅 Midnight cache refresh completed");
     }
 
     // Scheduled cleanup job to remove stale data
