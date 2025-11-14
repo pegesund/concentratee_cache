@@ -15,16 +15,21 @@ echo "📁 Working directory: $SCRIPT_DIR"
 stop_service() {
     echo "🛑 Stopping existing service..."
 
-    # Find Java process running quarkus
-    PID=$(pgrep -f "quarkus.*concentratee_cache" || true)
+    # Find Java process running the concentratee_cache jar
+    PIDS=$(pgrep -f "java.*concentratee_cache.*\.jar" || true)
 
-    if [ -n "$PID" ]; then
-        echo "   Found process: $PID"
-        kill $PID || true
+    if [ -n "$PIDS" ]; then
+        echo "   Found process(es): $PIDS"
+        for PID in $PIDS; do
+            kill $PID 2>/dev/null || true
+        done
 
-        # Wait for process to stop (max 30 seconds)
+        # Wait for processes to stop (max 30 seconds)
+        echo -n "   Waiting for shutdown"
         for i in {1..30}; do
-            if ! kill -0 $PID 2>/dev/null; then
+            REMAINING=$(pgrep -f "java.*concentratee_cache.*\.jar" || true)
+            if [ -z "$REMAINING" ]; then
+                echo ""
                 echo "   ✅ Service stopped successfully"
                 return 0
             fi
@@ -33,10 +38,13 @@ stop_service() {
         done
 
         # Force kill if still running
-        if kill -0 $PID 2>/dev/null; then
+        REMAINING=$(pgrep -f "java.*concentratee_cache.*\.jar" || true)
+        if [ -n "$REMAINING" ]; then
             echo ""
             echo "   ⚠️  Service didn't stop gracefully, forcing..."
-            kill -9 $PID || true
+            for PID in $REMAINING; do
+                kill -9 $PID 2>/dev/null || true
+            done
             sleep 2
         fi
     else
@@ -59,12 +67,19 @@ start_service() {
 
     # Start the application in background
     echo "   🏃 Starting Quarkus application..."
-    nohup java -jar target/quarkus-app/quarkus-run.jar > logs/application.log 2>&1 &
+    cd "$SCRIPT_DIR"
+    nohup java -jar target/quarkus-app/quarkus-run.jar >> logs/application.log 2>&1 &
 
-    # Save PID
-    NEW_PID=$!
-    echo $NEW_PID > concentratee_cache.pid
-    echo "   ✅ Service started with PID: $NEW_PID"
+    # Get the actual Java process PID (not the shell)
+    sleep 2
+    NEW_PID=$(pgrep -f "java.*quarkus-run.jar" | tail -1)
+
+    if [ -n "$NEW_PID" ]; then
+        echo $NEW_PID > concentratee_cache.pid
+        echo "   ✅ Service started with PID: $NEW_PID"
+    else
+        echo "   ⚠️  Started but couldn't determine PID"
+    fi
 }
 
 # Function to verify service is running
@@ -72,34 +87,33 @@ verify_service() {
     echo "🔍 Verifying service..."
     sleep 3
 
-    # Check if process is running
-    if [ -f concentratee_cache.pid ]; then
-        PID=$(cat concentratee_cache.pid)
-        if kill -0 $PID 2>/dev/null; then
-            echo "   ✅ Service is running (PID: $PID)"
+    # Check if Java process is running
+    RUNNING_PID=$(pgrep -f "java.*quarkus-run.jar" | tail -1)
 
-            # Try to reach the health endpoint
-            echo "   🏥 Checking health endpoint..."
-            for i in {1..10}; do
-                if curl -s http://localhost:8080/health > /dev/null 2>&1; then
-                    echo "   ✅ Health check passed!"
-                    echo ""
-                    echo "🎉 Service restarted successfully!"
-                    echo "📊 View logs: tail -f logs/application.log"
-                    return 0
-                fi
-                echo -n "."
-                sleep 2
-            done
-            echo ""
-            echo "   ⚠️  Service is running but health check failed"
-            echo "   Check logs: tail -f logs/application.log"
-        else
-            echo "   ❌ Service process not found!"
-            exit 1
-        fi
+    if [ -n "$RUNNING_PID" ]; then
+        echo "   ✅ Service is running (PID: $RUNNING_PID)"
+
+        # Try to reach the health endpoint
+        echo "   🏥 Checking health endpoint..."
+        for i in {1..10}; do
+            if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+                echo "   ✅ Health check passed!"
+                echo ""
+                echo "🎉 Service restarted successfully!"
+                echo "📊 View logs: tail -f logs/application.log"
+                echo "📊 Cache stats: curl http://localhost:8080/cache/stats"
+                return 0
+            fi
+            echo -n "."
+            sleep 2
+        done
+        echo ""
+        echo "   ⚠️  Service is running but health check failed"
+        echo "   Check logs: tail -f logs/application.log"
     else
-        echo "   ⚠️  PID file not found"
+        echo "   ❌ Service process not found!"
+        echo "   Check logs: tail -f logs/application.log"
+        exit 1
     fi
 }
 
