@@ -458,7 +458,9 @@ public class CacheManager {
                     Rule rule = new Rule();
                     rule.id = row.getLong("id");
                     rule.scope = row.getString("scope");
-                    rule.scopeValue = row.getString("scope_value");
+                    // Normalize NULL scope_value to empty string for consistent wildcard handling
+                    String scopeValue = row.getString("scope_value");
+                    rule.scopeValue = (scopeValue != null) ? scopeValue : "";
                     rule.startTime = row.getLocalDateTime("start_time");
                     rule.endTime = row.getLocalDateTime("end_time");
                     rule.profileId = row.getLong("profile_id");
@@ -721,10 +723,11 @@ public class CacheManager {
             if (payload.contains("\"operation\":\"DELETE\"")) {
                 Long id = extractId(payload);
                 Rule rule = rulesById.remove(id);
-                if (rule != null && rule.scope != null && rule.scopeValue != null) {
-                    // Remove from scope index
+                if (rule != null && rule.scope != null) {
+                    // Remove from scope index (scopeValue might be empty string for wildcards)
+                    String scopeValue = (rule.scopeValue != null) ? rule.scopeValue : "";
                     rulesByScopeAndValue.computeIfPresent(rule.scope, (scope, valueMap) -> {
-                        valueMap.computeIfPresent(rule.scopeValue, (value, rules) -> {
+                        valueMap.computeIfPresent(scopeValue, (value, rules) -> {
                             rules.removeIf(r -> r.id.equals(id));
                             return rules.isEmpty() ? null : rules;
                         });
@@ -934,9 +937,11 @@ public class CacheManager {
             .onItem().transform(rows -> {
                 // First remove old rule from index if it exists
                 Rule oldRule = rulesById.get(id);
-                if (oldRule != null && oldRule.scope != null && oldRule.scopeValue != null) {
+                if (oldRule != null && oldRule.scope != null) {
+                    // Normalize scopeValue for removal (might be empty string for wildcards)
+                    String oldScopeValue = (oldRule.scopeValue != null) ? oldRule.scopeValue : "";
                     rulesByScopeAndValue.computeIfPresent(oldRule.scope, (scope, valueMap) -> {
-                        valueMap.computeIfPresent(oldRule.scopeValue, (value, rules) -> {
+                        valueMap.computeIfPresent(oldScopeValue, (value, rules) -> {
                             rules.removeIf(r -> r.id.equals(id));
                             return rules.isEmpty() ? null : rules;
                         });
@@ -949,14 +954,16 @@ public class CacheManager {
                     Rule rule = new Rule();
                     rule.id = row.getLong("id");
                     rule.scope = row.getString("scope");
-                    rule.scopeValue = row.getString("scope_value");
+                    // Normalize NULL scope_value to empty string for consistent wildcard handling
+                    String scopeValue = row.getString("scope_value");
+                    rule.scopeValue = (scopeValue != null) ? scopeValue : "";
                     rule.startTime = row.getLocalDateTime("start_time");
                     rule.endTime = row.getLocalDateTime("end_time");
                     rule.profileId = row.getLong("profile_id");
                     rulesById.put(rule.id, rule);
 
-                    // Add to scope index
-                    if (rule.scope != null && rule.scopeValue != null) {
+                    // Add to scope index (including wildcard rules with empty scope_value)
+                    if (rule.scope != null) {
                         rulesByScopeAndValue.computeIfAbsent(rule.scope, k -> new ConcurrentHashMap<>())
                                            .computeIfAbsent(rule.scopeValue, k -> new ArrayList<>())
                                            .add(rule);
@@ -1122,6 +1129,10 @@ public class CacheManager {
 
     public Profile getProfile(Long id) {
         return profilesById.get(id);
+    }
+
+    public Rule getRule(Long id) {
+        return rulesById.get(id);
     }
 
     // Helper methods to remove items from indexes
