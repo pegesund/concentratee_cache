@@ -383,4 +383,84 @@ class CacheManagerTest {
             Thread.currentThread().interrupt();
         }
     }
+
+    @Test
+    @Order(11)
+    @DisplayName("Adding programs to profile should update cache via LISTEN/NOTIFY")
+    void testAddingProgramsUpdatesCache() {
+        // Create test data
+        createTestStudent().await().indefinitely();
+        createTestProfile().await().indefinitely();
+
+        // Create active session with profile (but no programs yet)
+        pgPool.query("""
+            INSERT INTO sessions (id, title, start_time, end_time, student_id, school_id, grade, profile_id, inserted_at, updated_at)
+            VALUES (%d, 'Program Test Session', NOW() - INTERVAL '5 minutes', NOW() + INTERVAL '1 hour', %d, 1, 8, %d, NOW(), NOW())
+            """.formatted(TEST_SESSION_ID, TEST_STUDENT_ID, TEST_PROFILE_ID))
+            .execute()
+            .await().indefinitely();
+
+        sleep(600);
+
+        // Verify profile has no programs initially
+        var profile1 = cacheManager.getProfile(TEST_PROFILE_ID);
+        assertNotNull(profile1, "Profile should exist");
+        assertTrue(profile1.programs.isEmpty(), "Profile should have no programs initially");
+
+        // Add programs to profile
+        pgPool.query("""
+            INSERT INTO profiles_programs (profile_id, program_id)
+            VALUES (%d, 1), (%d, 2)
+            """.formatted(TEST_PROFILE_ID, TEST_PROFILE_ID))
+            .execute()
+            .await().indefinitely();
+
+        sleep(600);
+
+        // Verify programs were added to cache
+        var profile2 = cacheManager.getProfile(TEST_PROFILE_ID);
+        assertNotNull(profile2, "Profile should still exist");
+        assertFalse(profile2.programs.isEmpty(), "Profile should have programs after INSERT");
+        assertEquals(2, profile2.programs.size(), "Profile should have 2 programs");
+    }
+
+    @Test
+    @Order(12)
+    @DisplayName("Adding categories to profile should update cache via LISTEN/NOTIFY")
+    void testAddingCategoriesUpdatesCache() {
+        // Create test data
+        createTestStudent().await().indefinitely();
+        createTestProfile().await().indefinitely();
+
+        // Create active session with profile (but no categories yet)
+        pgPool.query("""
+            INSERT INTO sessions (id, title, start_time, end_time, student_id, school_id, grade, profile_id, inserted_at, updated_at)
+            VALUES (%d, 'Category Test Session', NOW() - INTERVAL '5 minutes', NOW() + INTERVAL '1 hour', %d, 1, 8, %d, NOW(), NOW())
+            """.formatted(TEST_SESSION_ID, TEST_STUDENT_ID, TEST_PROFILE_ID))
+            .execute()
+            .await().indefinitely();
+
+        sleep(600);
+
+        // Verify profile has no categories initially
+        var profile1 = cacheManager.getProfile(TEST_PROFILE_ID);
+        assertNotNull(profile1, "Profile should exist");
+        assertTrue(profile1.categories.isEmpty(), "Profile should have no categories initially");
+
+        // Add categories to profile (using existing category IDs from database: 1 and 3)
+        pgPool.query("""
+            INSERT INTO profiles_categories (profile_id, url_category_id, is_active)
+            VALUES (%d, 1, true), (%d, 3, true)
+            """.formatted(TEST_PROFILE_ID, TEST_PROFILE_ID))
+            .execute()
+            .await().indefinitely();
+
+        sleep(600);
+
+        // Verify categories were added to cache
+        var profile2 = cacheManager.getProfile(TEST_PROFILE_ID);
+        assertNotNull(profile2, "Profile should still exist");
+        assertFalse(profile2.categories.isEmpty(), "Profile should have categories after INSERT");
+        assertEquals(2, profile2.categories.size(), "Profile should have 2 categories");
+    }
 }
