@@ -90,3 +90,8 @@ $RECYCLE.BIN/
 # Application specific
 *.log.*
 application-local.properties
+
+# Runtime files
+logs/
+*.pid
+nohup.out
