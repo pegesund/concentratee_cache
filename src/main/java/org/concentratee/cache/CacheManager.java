@@ -11,10 +11,13 @@ import io.vertx.pgclient.pubsub.PgSubscriber;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
+import org.concentratee.cache.model.CategoryUrl;
 import org.concentratee.cache.model.Profile;
 import org.concentratee.cache.model.Rule;
 import org.concentratee.cache.model.Session;
 import org.concentratee.cache.model.Student;
+import org.concentratee.cache.model.UrlCategory;
+import org.concentratee.cache.model.UrlSubcategory;
 import org.jboss.logging.Logger;
 
 import java.time.LocalDate;
@@ -219,7 +222,7 @@ public class CacheManager {
             .onItem().transform(rows -> {
                 int count = 0;
                 for (Row row : rows) {
-                    Profile profile = new Profile();
+                    Profile profile = new Profile();  // Constructor initializes lists
                     profile.id = row.getLong("id");
                     profile.name = row.getString("name");
                     profile.teacherId = row.getLong("teacher_id");
@@ -235,6 +238,212 @@ public class CacheManager {
                 }
                 LOG.debug("Loaded " + count + " profiles");
                 return null;
+            })
+            .chain(() -> loadPrograms())
+            .chain(() -> loadCategories());
+    }
+
+    private Uni<Void> loadPrograms() {
+        String sql = """
+            SELECT pp.profile_id, pr.name
+            FROM profiles_programs pp
+            JOIN programs pr ON pp.program_id = pr.id
+            ORDER BY pp.profile_id, pr.name
+            """;
+
+        return client.query(sql).execute()
+            .onItem().transform(rows -> {
+                int count = 0;
+                for (Row row : rows) {
+                    Long profileId = row.getLong("profile_id");
+                    String programName = row.getString("name");
+
+                    Profile profile = profilesById.get(profileId);
+                    if (profile != null) {
+                        profile.programs.add(programName);
+                        count++;
+                    }
+                }
+                LOG.debug("Loaded " + count + " program associations");
+                return null;
+            });
+    }
+
+    private Uni<Void> loadCategories() {
+        // First load all active categories for each profile
+        // Key insight: we need to track profiles_categories.id to look up inactive items
+        String categoriesSql = """
+            SELECT pc.id as pc_id, pc.profile_id, pc.url_category_id, pc.is_active, uc.name as category_name
+            FROM profiles_categories pc
+            JOIN url_categories uc ON pc.url_category_id = uc.id
+            WHERE pc.is_active = true
+            ORDER BY pc.profile_id, uc.name
+            """;
+
+        return client.query(categoriesSql).execute()
+            .onItem().transformToUni(categoryRows -> {
+                // Build category objects - key is profiles_categories.id
+                Map<Long, UrlCategory> categoryCache = new ConcurrentHashMap<>();
+                Map<Long, Long> profileCategoryIdToProfileId = new ConcurrentHashMap<>();
+
+                for (Row row : categoryRows) {
+                    Long profileCategoryId = row.getLong("pc_id");
+                    Long profileId = row.getLong("profile_id");
+                    Long categoryId = row.getLong("url_category_id");
+                    String categoryName = row.getString("category_name");
+                    Boolean isActive = row.getBoolean("is_active");
+
+                    Profile profile = profilesById.get(profileId);
+                    if (profile != null) {
+                        UrlCategory category = new UrlCategory();
+                        category.id = categoryId;
+                        category.name = categoryName;
+                        category.isActive = isActive;
+
+                        categoryCache.put(profileCategoryId, category);
+                        profileCategoryIdToProfileId.put(profileCategoryId, profileId);
+                        profile.categories.add(category);
+                    }
+                }
+
+                LOG.debug("Loaded " + categoryCache.size() + " active categories");
+
+                // Now load subcategories
+                return loadSubcategories(categoryCache, profileCategoryIdToProfileId);
+            });
+    }
+
+    private Uni<Void> loadSubcategories(Map<Long, UrlCategory> categoryCache,
+                                        Map<Long, Long> profileCategoryIdToProfileId) {
+        // Load all subcategories for the active categories
+        String subcategoriesSql = """
+            SELECT us.id, us.name, us.url_category_id
+            FROM url_subcategories us
+            """;
+
+        return client.query(subcategoriesSql).execute()
+            .onItem().transformToUni(subcatRows -> {
+                // Get inactive subcategories for filtering
+                String inactiveSql = """
+                    SELECT profiles_category_id, url_subcategory_id
+                    FROM profile_inactive_subcategories
+                    """;
+
+                return client.query(inactiveSql).execute()
+                    .onItem().transformToUni(inactiveRows -> {
+                        // Build set of inactive subcategory keys: profiles_category_id + subcategory_id
+                        Set<String> inactiveSubcats = new HashSet<>();
+                        for (Row row : inactiveRows) {
+                            Long profileCategoryId = row.getLong("profiles_category_id");
+                            Long subcatId = row.getLong("url_subcategory_id");
+                            inactiveSubcats.add(profileCategoryId + ":" + subcatId);
+                        }
+
+                        // Build subcategory objects and attach to categories
+                        // Key is profiles_category_id + subcategory_id
+                        Map<String, UrlSubcategory> subcategoryCache = new ConcurrentHashMap<>();
+                        int count = 0;
+
+                        for (Map.Entry<Long, UrlCategory> entry : categoryCache.entrySet()) {
+                            Long profileCategoryId = entry.getKey();
+                            UrlCategory category = entry.getValue();
+                            Long categoryId = category.id;
+
+                            for (Row row : subcatRows) {
+                                Long subcatCategoryId = row.getLong("url_category_id");
+                                if (!subcatCategoryId.equals(categoryId)) {
+                                    continue;
+                                }
+
+                                Long subcatId = row.getLong("id");
+                                String subcatKey = profileCategoryId + ":" + subcatId;
+
+                                // Skip if inactive for this profile_category
+                                if (inactiveSubcats.contains(subcatKey)) {
+                                    continue;
+                                }
+
+                                UrlSubcategory subcat = new UrlSubcategory();
+                                subcat.id = subcatId;
+                                subcat.name = row.getString("name");
+                                subcat.isActive = true;
+
+                                category.subcategories.add(subcat);
+                                subcategoryCache.put(subcatKey, subcat);
+                                count++;
+                            }
+                        }
+
+                        LOG.debug("Loaded " + count + " active subcategories");
+
+                        // Now load URLs
+                        return loadCategoryUrls(subcategoryCache);
+                    });
+            });
+    }
+
+    private Uni<Void> loadCategoryUrls(Map<String, UrlSubcategory> subcategoryCache) {
+        // Load all URLs
+        String urlsSql = """
+            SELECT id, url, subcategory_id
+            FROM urls
+            """;
+
+        return client.query(urlsSql).execute()
+            .onItem().transformToUni(urlRows -> {
+                // Get inactive URLs for filtering
+                String inactiveUrlsSql = """
+                    SELECT profiles_category_id, url_id
+                    FROM profile_inactive_urls
+                    """;
+
+                return client.query(inactiveUrlsSql).execute()
+                    .onItem().transform(inactiveRows -> {
+                        // Build set of inactive URL keys: profiles_category_id + url_id
+                        Set<String> inactiveUrls = new HashSet<>();
+                        for (Row row : inactiveRows) {
+                            Long profileCategoryId = row.getLong("profiles_category_id");
+                            Long urlId = row.getLong("url_id");
+                            inactiveUrls.add(profileCategoryId + ":" + urlId);
+                        }
+
+                        // Attach URLs to subcategories
+                        int count = 0;
+
+                        for (Map.Entry<String, UrlSubcategory> entry : subcategoryCache.entrySet()) {
+                            String key = entry.getKey(); // "profileCategoryId:subcatId"
+                            String[] parts = key.split(":");
+                            Long profileCategoryId = Long.parseLong(parts[0]);
+                            Long subcatId = Long.parseLong(parts[1]);
+                            UrlSubcategory subcat = entry.getValue();
+
+                            for (Row row : urlRows) {
+                                Long urlSubcatId = row.getLong("subcategory_id");
+                                if (!urlSubcatId.equals(subcatId)) {
+                                    continue;
+                                }
+
+                                Long urlId = row.getLong("id");
+                                String urlKey = profileCategoryId + ":" + urlId;
+
+                                // Skip if inactive for this profile_category
+                                if (inactiveUrls.contains(urlKey)) {
+                                    continue;
+                                }
+
+                                CategoryUrl categoryUrl = new CategoryUrl();
+                                categoryUrl.id = urlId;
+                                categoryUrl.url = row.getString("url");
+                                categoryUrl.isActive = true;
+
+                                subcat.urls.add(categoryUrl);
+                                count++;
+                            }
+                        }
+
+                        LOG.debug("Loaded " + count + " active URLs");
+                        return null;
+                    });
             });
     }
 
@@ -429,6 +638,23 @@ public class CacheManager {
                 Long id = extractId(payload);
                 profilesById.remove(id);
                 LOG.info("  ➡️ Removed profile " + id + " from cache");
+            } else if (payload.contains("\"operation\":\"RELOAD\"")) {
+                // Profile-related table changed (programs, categories, inactive lists)
+                Long id = extractId(payload);
+                String triggerTable = extractTriggerTable(payload);
+                LOG.info("  ➡️ Reloading profile " + id + " due to change in " + triggerTable);
+                loadProfileById(id).subscribe().with(
+                    v -> LOG.info("  ✅ Reloaded profile " + id + " from cache"),
+                    failure -> LOG.error("Failed to reload profile " + id, failure)
+                );
+            } else if (payload.contains("\"operation\":\"RELOAD_ALL\"")) {
+                // URL hierarchy changed (categories, subcategories, urls)
+                String triggerTable = extractTriggerTable(payload);
+                LOG.info("  ➡️ Reloading ALL profiles due to change in " + triggerTable);
+                loadProfiles().subscribe().with(
+                    v -> LOG.info("  ✅ Reloaded all profiles from cache"),
+                    failure -> LOG.error("Failed to reload all profiles", failure)
+                );
             } else {
                 Long id = extractId(payload);
                 // Reload profile from database
@@ -439,6 +665,16 @@ public class CacheManager {
             }
         } catch (Exception e) {
             LOG.error("Failed to handle profile change: " + e.getMessage(), e);
+        }
+    }
+
+    private String extractTriggerTable(String payload) {
+        try {
+            int start = payload.indexOf("\"trigger_table\":\"") + 17;
+            int end = payload.indexOf("\"", start);
+            return payload.substring(start, end);
+        } catch (Exception e) {
+            return "unknown";
         }
     }
 
@@ -727,15 +963,23 @@ public class CacheManager {
         if (json == null || json.equals("[]")) {
             return new ArrayList<>();
         }
-        // Simple JSON array parsing - in production use a proper JSON library
-        return Arrays.stream(json
-            .replace("[", "")
-            .replace("]", "")
-            .replace("\"", "")
-            .split(","))
-            .map(String::trim)
-            .filter(s -> !s.isEmpty())
-            .collect(Collectors.toList());
+
+        List<String> domains = new ArrayList<>();
+
+        // Parse JSONB array of objects: [{"id": "uuid", "name": "domain"}, ...]
+        // Extract only the "name" field from each object
+        // Simple regex-based parsing - matches "name": "value"
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"");
+        java.util.regex.Matcher matcher = pattern.matcher(json);
+
+        while (matcher.find()) {
+            String domainName = matcher.group(1);
+            if (domainName != null && !domainName.isEmpty()) {
+                domains.add(domainName);
+            }
+        }
+
+        return domains;
     }
 
     // Public getter methods for accessing cached data

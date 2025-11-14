@@ -158,6 +158,24 @@ public class Main {
                 sb.append("\"teacherId\":").append(profile.teacherId).append(",");
                 sb.append("\"schoolId\":").append(profile.schoolId).append(",");
                 sb.append("\"isWhitelistUrl\":").append(profile.isWhitelistUrl).append(",");
+
+                // Programs array
+                sb.append("\"programs\":");
+                if (profile.programs != null && !profile.programs.isEmpty()) {
+                    sb.append("[");
+                    boolean firstProgram = true;
+                    for (String program : profile.programs) {
+                        if (!firstProgram) sb.append(",");
+                        sb.append("\"").append(escapeJson(program)).append("\"");
+                        firstProgram = false;
+                    }
+                    sb.append("]");
+                } else {
+                    sb.append("[]");
+                }
+                sb.append(",");
+
+                // Domains array
                 sb.append("\"domains\":");
                 if (profile.domains != null && !profile.domains.isEmpty()) {
                     sb.append("[");
@@ -166,6 +184,66 @@ public class Main {
                         if (!firstDomain) sb.append(",");
                         sb.append("\"").append(escapeJson(domain)).append("\"");
                         firstDomain = false;
+                    }
+                    sb.append("]");
+                } else {
+                    sb.append("[]");
+                }
+                sb.append(",");
+
+                // Categories array with subcategories and URLs
+                sb.append("\"categories\":");
+                if (profile.categories != null && !profile.categories.isEmpty()) {
+                    sb.append("[");
+                    boolean firstCategory = true;
+                    for (var category : profile.categories) {
+                        if (!firstCategory) sb.append(",");
+                        sb.append("{");
+                        sb.append("\"id\":").append(category.id).append(",");
+                        sb.append("\"name\":\"").append(escapeJson(category.name)).append("\",");
+                        sb.append("\"isActive\":").append(category.isActive).append(",");
+
+                        // Subcategories array
+                        sb.append("\"subcategories\":");
+                        if (category.subcategories != null && !category.subcategories.isEmpty()) {
+                            sb.append("[");
+                            boolean firstSubcat = true;
+                            for (var subcat : category.subcategories) {
+                                if (!firstSubcat) sb.append(",");
+                                sb.append("{");
+                                sb.append("\"id\":").append(subcat.id).append(",");
+                                sb.append("\"name\":\"").append(escapeJson(subcat.name)).append("\",");
+                                sb.append("\"isActive\":").append(subcat.isActive).append(",");
+
+                                // URLs array
+                                sb.append("\"urls\":");
+                                if (subcat.urls != null && !subcat.urls.isEmpty()) {
+                                    sb.append("[");
+                                    boolean firstUrl = true;
+                                    for (var url : subcat.urls) {
+                                        if (!firstUrl) sb.append(",");
+                                        sb.append("{");
+                                        sb.append("\"id\":").append(url.id).append(",");
+                                        sb.append("\"url\":\"").append(escapeJson(url.url)).append("\",");
+                                        sb.append("\"isActive\":").append(url.isActive);
+                                        sb.append("}");
+                                        firstUrl = false;
+                                    }
+                                    sb.append("]");
+                                } else {
+                                    sb.append("[]");
+                                }
+
+                                sb.append("}");
+                                firstSubcat = false;
+                            }
+                            sb.append("]");
+                        } else {
+                            sb.append("[]");
+                        }
+
+                        sb.append("}");
+                        firstCategory = false;
                     }
                     sb.append("]");
                 } else {

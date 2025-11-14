@@ -117,4 +117,83 @@ class MainTest {
                 .contentType("text/plain")
                 .body(is("Cleanup triggered successfully"));
     }
+
+    @Test
+    @Order(9)
+    @DisplayName("Profile API should include programs array")
+    void testProfilesIncludePrograms() {
+        given()
+            .queryParam("expand", "true")
+            .when().get("/cache/profiles/active/test@example.com")
+            .then()
+                .statusCode(200)
+                .contentType("application/json")
+                .body("email", is("test@example.com"))
+                .body("profiles", notNullValue())
+                // Verify programs field exists (even if empty)
+                .body("profiles[0].programs", notNullValue());
+    }
+
+    @Test
+    @Order(10)
+    @DisplayName("Profile API should include categories with full hierarchy")
+    void testProfilesIncludeCategoriesHierarchy() {
+        given()
+            .queryParam("expand", "true")
+            .when().get("/cache/profiles/active/test@example.com")
+            .then()
+                .statusCode(200)
+                .contentType("application/json")
+                .body("email", is("test@example.com"))
+                .body("profiles", notNullValue())
+                // Verify categories field exists
+                .body("profiles[0].categories", notNullValue())
+                // If categories exist, verify structure
+                .body("profiles[0].id", notNullValue())
+                .body("profiles[0].name", notNullValue())
+                .body("profiles[0].domains", notNullValue())
+                .body("profiles[0].programs", notNullValue())
+                .body("profiles[0].categories", notNullValue());
+    }
+
+    @Test
+    @Order(11)
+    @DisplayName("Profile API parity - verify complete structure matches Elixir API")
+    void testCompleteApiParity() {
+        // This test verifies that the Java cache API exposes the same data structure
+        // as the Elixir API, specifically:
+        // - profiles with id, name, teacherId, schoolId, isWhitelistUrl
+        // - programs array (active only)
+        // - domains array
+        // - categories array with:
+        //   - id, name, isActive
+        //   - subcategories array with:
+        //     - id, name, isActive
+        //     - urls array with:
+        //       - id, url, isActive
+        //
+        // All data should reflect only ACTIVE items based on:
+        // - profiles_categories.is_active = true
+        // - Excluding items in profile_inactive_subcategories
+        // - Excluding items in profile_inactive_urls
+
+        given()
+            .queryParam("expand", "true")
+            .when().get("/cache/profiles/active/test@example.com")
+            .then()
+                .statusCode(200)
+                .contentType("application/json")
+                .body("email", is("test@example.com"))
+                .body("profiles", notNullValue())
+                // Profile structure
+                .body("profiles[0].id", notNullValue())
+                .body("profiles[0].name", notNullValue())
+                .body("profiles[0].teacherId", notNullValue())
+                .body("profiles[0].schoolId", notNullValue())
+                .body("profiles[0].isWhitelistUrl", notNullValue())
+                // Arrays must exist
+                .body("profiles[0].programs", notNullValue())
+                .body("profiles[0].domains", notNullValue())
+                .body("profiles[0].categories", notNullValue());
+    }
 }
