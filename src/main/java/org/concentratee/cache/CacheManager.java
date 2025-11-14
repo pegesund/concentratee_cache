@@ -1255,8 +1255,16 @@ public class CacheManager {
 
         // School-wide rule
         if (schoolId != null) {
+            // Check both specific school rules and wildcard school rules (empty scope_value)
             List<Rule> schoolRules = getRulesByScope("School", String.valueOf(schoolId));
+            List<Rule> wildcardSchoolRules = getRulesByScope("School", "");
+
             for (Rule rule : schoolRules) {
+                if (rule.isActiveNow() && rule.profileId != null) {
+                    activeProfiles.add(rule.profileId);
+                }
+            }
+            for (Rule rule : wildcardSchoolRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
@@ -1265,8 +1273,16 @@ public class CacheManager {
 
         // Grade-level rule
         if (grade != null) {
+            // Check both specific grade rules and wildcard grade rules (empty scope_value)
             List<Rule> gradeRules = getRulesByScope("Grade", String.valueOf(grade));
+            List<Rule> wildcardGradeRules = getRulesByScope("Grade", "");
+
             for (Rule rule : gradeRules) {
+                if (rule.isActiveNow() && rule.profileId != null) {
+                    activeProfiles.add(rule.profileId);
+                }
+            }
+            for (Rule rule : wildcardGradeRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
@@ -1275,8 +1291,16 @@ public class CacheManager {
 
         // Class-specific rule
         if (classId != null) {
+            // Check both specific class rules and wildcard class rules (empty scope_value)
             List<Rule> classRules = getRulesByScope("Class", String.valueOf(classId));
+            List<Rule> wildcardClassRules = getRulesByScope("Class", "");
+
             for (Rule rule : classRules) {
+                if (rule.isActiveNow() && rule.profileId != null) {
+                    activeProfiles.add(rule.profileId);
+                }
+            }
+            for (Rule rule : wildcardClassRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
@@ -1341,24 +1365,42 @@ public class CacheManager {
 
         // Check school-wide rules
         if (student.schoolId != null) {
+            // Check both specific school rules and wildcard school rules (empty scope_value)
             List<Rule> schoolRules = getRulesByScope("School", String.valueOf(student.schoolId));
+            List<Rule> wildcardSchoolRules = getRulesByScope("School", "");
+
             schoolRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+            wildcardSchoolRules.stream()
                 .filter(r -> r.isActiveNow(now) && r.profileId != null)
                 .forEach(activeRules::add);
         }
 
         // Check grade-level rules
         if (grade != null) {
+            // Check both specific grade rules and wildcard grade rules (empty scope_value)
             List<Rule> gradeRules = getRulesByScope("Grade", String.valueOf(grade));
+            List<Rule> wildcardGradeRules = getRulesByScope("Grade", "");
+
             gradeRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+            wildcardGradeRules.stream()
                 .filter(r -> r.isActiveNow(now) && r.profileId != null)
                 .forEach(activeRules::add);
         }
 
         // Check class-level rules
         if (classId != null) {
+            // Check both specific class rules and wildcard class rules (empty scope_value)
             List<Rule> classRules = getRulesByScope("Class", String.valueOf(classId));
+            List<Rule> wildcardClassRules = getRulesByScope("Class", "");
+
             classRules.stream()
+                .filter(r -> r.isActiveNow(now) && r.profileId != null)
+                .forEach(activeRules::add);
+            wildcardClassRules.stream()
                 .filter(r -> r.isActiveNow(now) && r.profileId != null)
                 .forEach(activeRules::add);
         }
