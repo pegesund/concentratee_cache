@@ -291,14 +291,12 @@ public class CacheManager {
                     Long profileId = row.getLong("profile_id");
                     Long categoryId = row.getLong("url_category_id");
                     String categoryName = row.getString("category_name");
-                    Boolean isActive = row.getBoolean("is_active");
 
                     Profile profile = profilesById.get(profileId);
                     if (profile != null) {
                         UrlCategory category = new UrlCategory();
                         category.id = categoryId;
                         category.name = categoryName;
-                        category.isActive = isActive;
 
                         categoryCache.put(profileCategoryId, category);
                         profileCategoryIdToProfileId.put(profileCategoryId, profileId);
@@ -366,7 +364,6 @@ public class CacheManager {
                                 UrlSubcategory subcat = new UrlSubcategory();
                                 subcat.id = subcatId;
                                 subcat.name = row.getString("name");
-                                subcat.isActive = true;
 
                                 category.subcategories.add(subcat);
                                 subcategoryCache.put(subcatKey, subcat);
@@ -434,7 +431,6 @@ public class CacheManager {
                                 CategoryUrl categoryUrl = new CategoryUrl();
                                 categoryUrl.id = urlId;
                                 categoryUrl.url = row.getString("url");
-                                categoryUrl.isActive = true;
 
                                 subcat.urls.add(categoryUrl);
                                 count++;

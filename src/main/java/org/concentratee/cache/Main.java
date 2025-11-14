@@ -201,7 +201,6 @@ public class Main {
                         sb.append("{");
                         sb.append("\"id\":").append(category.id).append(",");
                         sb.append("\"name\":\"").append(escapeJson(category.name)).append("\",");
-                        sb.append("\"isActive\":").append(category.isActive).append(",");
 
                         // Subcategories array
                         sb.append("\"subcategories\":");
@@ -213,7 +212,6 @@ public class Main {
                                 sb.append("{");
                                 sb.append("\"id\":").append(subcat.id).append(",");
                                 sb.append("\"name\":\"").append(escapeJson(subcat.name)).append("\",");
-                                sb.append("\"isActive\":").append(subcat.isActive).append(",");
 
                                 // URLs array
                                 sb.append("\"urls\":");
@@ -224,8 +222,7 @@ public class Main {
                                         if (!firstUrl) sb.append(",");
                                         sb.append("{");
                                         sb.append("\"id\":").append(url.id).append(",");
-                                        sb.append("\"url\":\"").append(escapeJson(url.url)).append("\",");
-                                        sb.append("\"isActive\":").append(url.isActive);
+                                        sb.append("\"url\":\"").append(escapeJson(url.url)).append("\"");
                                         sb.append("}");
                                         firstUrl = false;
                                     }
