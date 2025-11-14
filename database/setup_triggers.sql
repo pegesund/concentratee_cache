@@ -172,64 +172,68 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Drop existing triggers if they exist
+-- Create triggers (idempotent - uses DROP IF EXISTS before CREATE)
+-- This makes the script safe to run multiple times
+
+-- Student trigger
 DROP TRIGGER IF EXISTS student_changes_trigger ON students;
-DROP TRIGGER IF EXISTS profile_changes_trigger ON profiles;
-DROP TRIGGER IF EXISTS rule_changes_trigger ON rules;
-DROP TRIGGER IF EXISTS session_changes_trigger ON sessions;
-
--- Drop profile-related triggers
-DROP TRIGGER IF EXISTS profiles_programs_changes_trigger ON profiles_programs;
-DROP TRIGGER IF EXISTS profiles_categories_changes_trigger ON profiles_categories;
-DROP TRIGGER IF EXISTS profile_inactive_subcategories_changes_trigger ON profile_inactive_subcategories;
-DROP TRIGGER IF EXISTS profile_inactive_urls_changes_trigger ON profile_inactive_urls;
-DROP TRIGGER IF EXISTS url_categories_changes_trigger ON url_categories;
-DROP TRIGGER IF EXISTS url_subcategories_changes_trigger ON url_subcategories;
-DROP TRIGGER IF EXISTS urls_changes_trigger ON urls;
-
--- Create triggers
 CREATE TRIGGER student_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON students
     FOR EACH ROW EXECUTE FUNCTION notify_student_changes();
 
+-- Profile trigger
+DROP TRIGGER IF EXISTS profile_changes_trigger ON profiles;
 CREATE TRIGGER profile_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON profiles
     FOR EACH ROW EXECUTE FUNCTION notify_profile_changes();
 
+-- Rule trigger
+DROP TRIGGER IF EXISTS rule_changes_trigger ON rules;
 CREATE TRIGGER rule_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON rules
     FOR EACH ROW EXECUTE FUNCTION notify_rule_changes();
 
+-- Session trigger
+DROP TRIGGER IF EXISTS session_changes_trigger ON sessions;
 CREATE TRIGGER session_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON sessions
     FOR EACH ROW EXECUTE FUNCTION notify_session_changes();
 
--- Create profile-related triggers that notify when programs/categories change
+-- Profile-related triggers that notify when programs/categories change
+
+DROP TRIGGER IF EXISTS profiles_programs_changes_trigger ON profiles_programs;
 CREATE TRIGGER profiles_programs_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON profiles_programs
     FOR EACH ROW EXECUTE FUNCTION notify_profile_related_changes();
 
+DROP TRIGGER IF EXISTS profiles_categories_changes_trigger ON profiles_categories;
 CREATE TRIGGER profiles_categories_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON profiles_categories
     FOR EACH ROW EXECUTE FUNCTION notify_profile_related_changes();
 
+DROP TRIGGER IF EXISTS profile_inactive_subcategories_changes_trigger ON profile_inactive_subcategories;
 CREATE TRIGGER profile_inactive_subcategories_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON profile_inactive_subcategories
     FOR EACH ROW EXECUTE FUNCTION notify_profile_related_changes();
 
+DROP TRIGGER IF EXISTS profile_inactive_urls_changes_trigger ON profile_inactive_urls;
 CREATE TRIGGER profile_inactive_urls_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON profile_inactive_urls
     FOR EACH ROW EXECUTE FUNCTION notify_profile_related_changes();
 
--- Create URL hierarchy triggers
+-- URL hierarchy triggers
+
+DROP TRIGGER IF EXISTS url_categories_changes_trigger ON url_categories;
 CREATE TRIGGER url_categories_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON url_categories
     FOR EACH ROW EXECUTE FUNCTION notify_url_hierarchy_changes();
 
+DROP TRIGGER IF EXISTS url_subcategories_changes_trigger ON url_subcategories;
 CREATE TRIGGER url_subcategories_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON url_subcategories
     FOR EACH ROW EXECUTE FUNCTION notify_url_hierarchy_changes();
 
+DROP TRIGGER IF EXISTS urls_changes_trigger ON urls;
 CREATE TRIGGER urls_changes_trigger
     AFTER INSERT OR UPDATE OR DELETE ON urls
     FOR EACH ROW EXECUTE FUNCTION notify_url_hierarchy_changes();

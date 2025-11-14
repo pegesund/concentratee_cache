@@ -24,7 +24,7 @@ class CacheManagerTest {
     @Inject
     PgPool pgPool;
 
-    private static final String TEST_EMAIL = "cache.test@example.com";
+    private static final String TEST_EMAIL = "cachemanager.test@example.com";
     private static final Long TEST_STUDENT_ID = 99001L;
     private static final Long TEST_PROFILE_ID = 99001L;
     private static final Long TEST_SESSION_ID = 99001L;
