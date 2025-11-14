@@ -842,8 +842,16 @@ public class CacheManager {
 
         return client.preparedQuery(sql).execute(io.vertx.mutiny.sqlclient.Tuple.of(id))
             .onItem().transformToUni(rows -> {
+                Profile profile = null;
                 for (Row row : rows) {
-                    Profile profile = new Profile();
+                    // Reuse existing profile if it exists to avoid race conditions
+                    profile = profilesById.get(id);
+                    if (profile == null) {
+                        profile = new Profile();
+                        profilesById.put(id, profile);
+                    }
+
+                    // Update profile fields
                     profile.id = row.getLong("id");
                     profile.name = row.getString("name");
                     profile.teacherId = row.getLong("teacher_id");
@@ -851,9 +859,10 @@ public class CacheManager {
                     profile.isWhitelistUrl = row.getBoolean("is_whitelist_url");
                     String domainsJson = row.get(Object.class, "domains").toString();
                     profile.domains = parseDomainsFromJson(domainsJson);
-                    profilesById.put(profile.id, profile);
                 }
-                // Return a Uni that completes the chain
+
+                // Load programs and categories BEFORE completing
+                // This ensures the profile is fully loaded when we return
                 return loadProgramsForProfile(id);
             })
             .chain(() -> loadCategoriesForProfile(id));
@@ -873,9 +882,12 @@ public class CacheManager {
                 Profile profile = profilesById.get(profileId);
                 if (profile != null) {
                     profile.programs.clear(); // Clear existing programs
+                    int count = 0;
                     for (Row row : rows) {
                         profile.programs.add(row.getString("name"));
+                        count++;
                     }
+                    LOG.debug("Loaded " + count + " programs for profile " + profileId);
                 }
                 return null;
             });

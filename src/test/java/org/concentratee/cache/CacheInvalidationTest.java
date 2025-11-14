@@ -43,6 +43,7 @@ class CacheInvalidationTest {
     private static Long testProfileCategoryId;
     private static Long testSubcategoryId;
     private static Long testUrlId;
+    private static Long testRuleId;
     private static boolean setupCompleted = false;
 
     @BeforeEach
@@ -96,8 +97,17 @@ class CacheInvalidationTest {
         client.query("DELETE FROM profile_inactive_urls WHERE profiles_category_id IN (SELECT id FROM profiles_categories WHERE profile_id = " + TEST_PROFILE_ID + ")").execute().await().indefinitely();
         client.query("DELETE FROM profiles_categories WHERE profile_id = " + TEST_PROFILE_ID).execute().await().indefinitely();
 
-        // Give cache time to update after cleanup
-        Thread.sleep(1000);
+        // Create an active rule that makes profile 1 active for student 42 (test@example.com)
+        // This is a school-wide rule for school_id = 1
+        var ruleResult = client.query(
+            "INSERT INTO rules (scope, scope_value, start_time, end_time, profile_id, inserted_at, updated_at) " +
+            "VALUES ('School', '1', NOW() - INTERVAL '1 hour', NOW() + INTERVAL '10 hours', " + TEST_PROFILE_ID + ", NOW(), NOW()) " +
+            "RETURNING id"
+        ).execute().await().indefinitely();
+        testRuleId = ruleResult.iterator().next().getLong("id");
+
+        // Give cache time to update after setup
+        cacheManager.waitForNotifications(2000);
     }
 
     @Test
@@ -134,17 +144,35 @@ class CacheInvalidationTest {
         ).execute().await().indefinitely();
         Assertions.assertTrue(dbCheck.iterator().hasNext(), "Program should be in database");
 
-        // Wait for LISTEN/NOTIFY to propagate and cache to update
-        cacheManager.waitForNotifications(2000);
+        // Wait for LISTEN/NOTIFY to propagate and cache to update with retry logic
+        boolean found = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Thread.sleep(500);
+            var fullResponse = given()
+                .queryParam("expand", "true")
+                .when().get("/cache/profiles/active/" + TEST_EMAIL)
+                .then()
+                    .statusCode(200)
+                    .body("email", is(TEST_EMAIL))
+                    .extract().asString();
 
-        // Verify cache was updated
-        given()
-            .queryParam("expand", "true")
-            .when().get("/cache/profiles/active/" + TEST_EMAIL)
-            .then()
-                .statusCode(200)
-                .body("email", is(TEST_EMAIL))
-                .body("profiles[0].programs.findAll { it == 'CacheTest Program' }", hasSize(1));
+            System.out.println("Attempt " + (attempt + 1) + " response: " + fullResponse);
+
+            var response = given()
+                .queryParam("expand", "true")
+                .when().get("/cache/profiles/active/" + TEST_EMAIL)
+                .then()
+                    .statusCode(200)
+                    .body("email", is(TEST_EMAIL))
+                    .extract().path("profiles[0].programs");
+
+            if (response != null && ((java.util.List<?>) response).contains("CacheTest Program")) {
+                found = true;
+                break;
+            }
+        }
+
+        Assertions.assertTrue(found, "Program should be in cache after LISTEN/NOTIFY propagation");
     }
 
     @Test
@@ -191,17 +219,24 @@ class CacheInvalidationTest {
         ).execute().await().indefinitely();
         testProfileCategoryId = result.iterator().next().getLong("id");
 
-        // Give cache time to update via trigger
-        Thread.sleep(2000);
+        // Wait for LISTEN/NOTIFY with retry logic
+        boolean categoryAdded = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Thread.sleep(500);
+            int currentCount = given()
+                .queryParam("expand", "true")
+                .when().get("/cache/profiles/active/" + TEST_EMAIL)
+                .then()
+                    .statusCode(200)
+                    .extract().path("profiles[0].categories.size()");
 
-        // Verify cache was updated (should have one more category)
-        given()
-            .queryParam("expand", "true")
-            .when().get("/cache/profiles/active/" + TEST_EMAIL)
-            .then()
-                .statusCode(200)
-                .body("email", is(TEST_EMAIL))
-                .body("profiles[0].categories.size()", is(initialCount + 1));
+            if (currentCount == initialCount + 1) {
+                categoryAdded = true;
+                break;
+            }
+        }
+
+        Assertions.assertTrue(categoryAdded, "Category should be added to cache after LISTEN/NOTIFY propagation");
     }
 
     @Test
@@ -221,17 +256,24 @@ class CacheInvalidationTest {
             "UPDATE profiles_categories SET is_active = false WHERE id = " + testProfileCategoryId
         ).execute().await().indefinitely();
 
-        // Give cache time to update via trigger
-        Thread.sleep(2000);
+        // Wait for LISTEN/NOTIFY with retry logic
+        boolean categoryRemoved = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Thread.sleep(500);
+            int currentCount = given()
+                .queryParam("expand", "true")
+                .when().get("/cache/profiles/active/" + TEST_EMAIL)
+                .then()
+                    .statusCode(200)
+                    .extract().path("profiles[0].categories.size()");
 
-        // Verify cache was updated (should have one less category)
-        given()
-            .queryParam("expand", "true")
-            .when().get("/cache/profiles/active/" + TEST_EMAIL)
-            .then()
-                .statusCode(200)
-                .body("email", is(TEST_EMAIL))
-                .body("profiles[0].categories.size()", is(beforeCount - 1));
+            if (currentCount == beforeCount - 1) {
+                categoryRemoved = true;
+                break;
+            }
+        }
+
+        Assertions.assertTrue(categoryRemoved, "Category should be removed from cache after deactivation");
     }
 
     @Test
@@ -251,17 +293,24 @@ class CacheInvalidationTest {
             "UPDATE profiles_categories SET is_active = true WHERE id = " + testProfileCategoryId
         ).execute().await().indefinitely();
 
-        // Give cache time to update via trigger
-        Thread.sleep(2000);
+        // Wait for LISTEN/NOTIFY with retry logic
+        boolean categoryReactivated = false;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Thread.sleep(500);
+            int currentCount = given()
+                .queryParam("expand", "true")
+                .when().get("/cache/profiles/active/" + TEST_EMAIL)
+                .then()
+                    .statusCode(200)
+                    .extract().path("profiles[0].categories.size()");
 
-        // Verify cache was updated
-        given()
-            .queryParam("expand", "true")
-            .when().get("/cache/profiles/active/" + TEST_EMAIL)
-            .then()
-                .statusCode(200)
-                .body("email", is(TEST_EMAIL))
-                .body("profiles[0].categories.size()", is(beforeCount + 1));
+            if (currentCount == beforeCount + 1) {
+                categoryReactivated = true;
+                break;
+            }
+        }
+
+        Assertions.assertTrue(categoryReactivated, "Category should be reactivated in cache");
     }
 
     @Test
