@@ -81,7 +81,7 @@ class CacheManagerTest {
 
     @Test
     @Order(3)
-    @DisplayName("Future session should NOT return profile (not active yet)")
+    @DisplayName("Future session should NOT return profile from session (but may return from rules)")
     void testFutureSessionDoesNotReturnProfile() {
         // Create test data
         createTestStudent().await().indefinitely();
@@ -98,13 +98,15 @@ class CacheManagerTest {
         // Wait for LISTEN/NOTIFY
         sleep(600);
 
-        // Verify cache does NOT return future profile (not active yet)
+        // Verify the future session's profile (99001) is NOT returned (session not active yet)
         Set<Long> activeProfiles = cacheManager.getActiveProfilesForStudent(TEST_EMAIL);
 
-        assertTrue(activeProfiles.isEmpty(), "Future session should not return profiles yet");
+        assertFalse(activeProfiles.contains(TEST_PROFILE_ID),
+            "Future session profile should not be active yet");
 
-        // Note: Future sessions may not be in cache immediately if they're added via LISTEN/NOTIFY
-        // and the cache filters them out during the load. This is correct behavior.
+        // Note: The test may still return OTHER profiles if there are active rules
+        // matching the student's school_id, grade, or class_id. This is correct behavior
+        // - future sessions provide student attributes for rule matching.
     }
 
     @Test

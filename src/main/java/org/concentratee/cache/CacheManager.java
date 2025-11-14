@@ -1116,12 +1116,9 @@ public class CacheManager {
             return Collections.emptyList();
         }
 
-        // Filter to only return today's sessions to prevent stale data
-        LocalDate today = LocalDate.now();
-        return sessions.stream()
-            .filter(s -> s.startTime != null &&
-                         s.startTime.toLocalDate().equals(today))
-            .collect(Collectors.toList());
+        // Return cached sessions directly - already filtered at load time (today + 7 days)
+        // The caller (getActiveProfilesForStudent) filters by isActiveNow() for active sessions
+        return sessions;
     }
 
     public List<Rule> getRulesByScope(String scope, String scopeValue) {
