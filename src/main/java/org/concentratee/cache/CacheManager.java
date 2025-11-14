@@ -582,7 +582,7 @@ public class CacheManager {
 
         subscriber = PgSubscriber.subscriber(vertx.getDelegate(), connectOptions);
 
-        // Connect and setup listeners
+        // Connect and setup listeners - BLOCKING to ensure connection is established
         subscriber.connect(ar -> {
             if (ar.succeeded()) {
                 LOG.info("✅ Connected to PostgreSQL for LISTEN/NOTIFY");
@@ -611,11 +611,18 @@ public class CacheManager {
                     handleStudentChange(payload);
                 });
 
-                LOG.info("  Channels: students_changes, sessions_changes, rules_changes, profiles_changes");
+                LOG.info("✅ LISTEN/NOTIFY setup complete - listening on 4 channels");
             } else {
-                LOG.error("❌ Failed to setup LISTEN/NOTIFY: " + ar.cause().getMessage());
+                LOG.error("❌ Failed to setup LISTEN/NOTIFY: " + ar.cause().getMessage(), ar.cause());
             }
         });
+
+        // Wait a bit to ensure connection completes
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     void onShutdown(@Observes ShutdownEvent ev) {
@@ -625,16 +632,48 @@ public class CacheManager {
         }
     }
 
+    /**
+     * Wait for any pending database notifications to be processed.
+     * This is useful in tests where LISTEN/NOTIFY is asynchronous.
+     *
+     * @param maxWaitMillis Maximum time to wait in milliseconds
+     */
+    public void waitForNotifications(long maxWaitMillis) {
+        try {
+            Thread.sleep(maxWaitMillis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Check if the LISTEN/NOTIFY subscriber is connected.
+     * Useful for tests to verify the connection is alive.
+     */
+    public boolean isSubscriberConnected() {
+        boolean connected = subscriber != null;
+        LOG.info("🔍 Checking subscriber connection: " + (connected ? "CONNECTED" : "NOT CONNECTED"));
+        return connected;
+    }
+
     private void handleProfileChange(String payload) {
         // Parse JSON payload and update cache
         // For now, just reload the profile
         try {
-            // Simple parsing - in production use proper JSON library
-            if (payload.contains("\"operation\":\"DELETE\"")) {
+            // Simple parsing - handle payloads with or without spaces
+            if (payload.contains("DELETE")) {
                 Long id = extractId(payload);
                 profilesById.remove(id);
                 LOG.info("  ➡️ Removed profile " + id + " from cache");
-            } else if (payload.contains("\"operation\":\"RELOAD\"")) {
+            } else if (payload.contains("RELOAD_ALL")) {
+                // URL hierarchy changed (categories, subcategories, urls)
+                String triggerTable = extractTriggerTable(payload);
+                LOG.info("  ➡️ Reloading ALL profiles due to change in " + triggerTable);
+                loadProfiles().subscribe().with(
+                    v -> LOG.info("  ✅ Reloaded all profiles from cache"),
+                    failure -> LOG.error("Failed to reload all profiles", failure)
+                );
+            } else if (payload.contains("RELOAD")) {
                 // Profile-related table changed (programs, categories, inactive lists)
                 Long id = extractId(payload);
                 String triggerTable = extractTriggerTable(payload);
@@ -642,14 +681,6 @@ public class CacheManager {
                 loadProfileById(id).subscribe().with(
                     v -> LOG.info("  ✅ Reloaded profile " + id + " from cache"),
                     failure -> LOG.error("Failed to reload profile " + id, failure)
-                );
-            } else if (payload.contains("\"operation\":\"RELOAD_ALL\"")) {
-                // URL hierarchy changed (categories, subcategories, urls)
-                String triggerTable = extractTriggerTable(payload);
-                LOG.info("  ➡️ Reloading ALL profiles due to change in " + triggerTable);
-                loadProfiles().subscribe().with(
-                    v -> LOG.info("  ✅ Reloaded all profiles from cache"),
-                    failure -> LOG.error("Failed to reload all profiles", failure)
                 );
             } else {
                 Long id = extractId(payload);
@@ -666,8 +697,17 @@ public class CacheManager {
 
     private String extractTriggerTable(String payload) {
         try {
-            int start = payload.indexOf("\"trigger_table\":\"") + 17;
+            // Handle both "trigger_table":"value" and "trigger_table" : "value"
+            int keyIndex = payload.indexOf("\"trigger_table\"");
+            if (keyIndex == -1) return "unknown";
+
+            int firstQuote = payload.indexOf("\"", keyIndex + 15);
+            if (firstQuote == -1) return "unknown";
+
+            int start = firstQuote + 1;
             int end = payload.indexOf("\"", start);
+            if (end == -1) return "unknown";
+
             return payload.substring(start, end);
         } catch (Exception e) {
             return "unknown";
@@ -788,6 +828,7 @@ public class CacheManager {
     }
 
     private Uni<Void> loadProfileById(Long id) {
+        // Load basic profile data
         String sql = """
             SELECT p.id, p.name, p.domains, p.teacher_id, p.school_id, p.is_whitelist_url
             FROM profiles p
@@ -795,7 +836,7 @@ public class CacheManager {
             """;
 
         return client.preparedQuery(sql).execute(io.vertx.mutiny.sqlclient.Tuple.of(id))
-            .onItem().transform(rows -> {
+            .onItem().transformToUni(rows -> {
                 for (Row row : rows) {
                     Profile profile = new Profile();
                     profile.id = row.getLong("id");
@@ -807,7 +848,76 @@ public class CacheManager {
                     profile.domains = parseDomainsFromJson(domainsJson);
                     profilesById.put(profile.id, profile);
                 }
+                // Return a Uni that completes the chain
+                return loadProgramsForProfile(id);
+            })
+            .chain(() -> loadCategoriesForProfile(id));
+    }
+
+    private Uni<Void> loadProgramsForProfile(Long profileId) {
+        String sql = """
+            SELECT pr.name
+            FROM profiles_programs pp
+            JOIN programs pr ON pp.program_id = pr.id
+            WHERE pp.profile_id = $1
+            ORDER BY pr.name
+            """;
+
+        return client.preparedQuery(sql).execute(io.vertx.mutiny.sqlclient.Tuple.of(profileId))
+            .onItem().transform(rows -> {
+                Profile profile = profilesById.get(profileId);
+                if (profile != null) {
+                    profile.programs.clear(); // Clear existing programs
+                    for (Row row : rows) {
+                        profile.programs.add(row.getString("name"));
+                    }
+                }
                 return null;
+            });
+    }
+
+    private Uni<Void> loadCategoriesForProfile(Long profileId) {
+        // Load active categories for this specific profile
+        String categoriesSql = """
+            SELECT pc.id as pc_id, pc.url_category_id, uc.name as category_name
+            FROM profiles_categories pc
+            JOIN url_categories uc ON pc.url_category_id = uc.id
+            WHERE pc.profile_id = $1 AND pc.is_active = true
+            ORDER BY uc.name
+            """;
+
+        return client.preparedQuery(categoriesSql).execute(io.vertx.mutiny.sqlclient.Tuple.of(profileId))
+            .onItem().transformToUni(categoryRows -> {
+                Profile profile = profilesById.get(profileId);
+                if (profile == null) {
+                    return Uni.createFrom().voidItem();
+                }
+
+                profile.categories.clear(); // Clear existing categories
+                Map<Long, UrlCategory> categoryCache = new ConcurrentHashMap<>();
+                Map<Long, Long> profileCategoryIdToProfileId = new ConcurrentHashMap<>();
+
+                for (Row row : categoryRows) {
+                    Long profileCategoryId = row.getLong("pc_id");
+                    Long categoryId = row.getLong("url_category_id");
+                    String categoryName = row.getString("category_name");
+
+                    UrlCategory category = new UrlCategory();
+                    category.id = categoryId;
+                    category.name = categoryName;
+
+                    categoryCache.put(profileCategoryId, category);
+                    profileCategoryIdToProfileId.put(profileCategoryId, profileId);
+                    profile.categories.add(category);
+                }
+
+                // If no categories, return early
+                if (categoryCache.isEmpty()) {
+                    return Uni.createFrom().voidItem();
+                }
+
+                // Load subcategories for these categories
+                return loadSubcategories(categoryCache, profileCategoryIdToProfileId);
             });
     }
 

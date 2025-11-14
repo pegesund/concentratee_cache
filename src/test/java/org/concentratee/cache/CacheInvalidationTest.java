@@ -4,6 +4,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.vertx.mutiny.pgclient.PgPool;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.TestInstance;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.CoreMatchers.*;
@@ -24,11 +25,15 @@ import static org.hamcrest.Matchers.hasSize;
  * Uses existing test data (student ID 42, profile ID 1, email test@example.com)
  */
 @QuarkusTest
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CacheInvalidationTest {
 
     @Inject
     PgPool client;
+
+    @Inject
+    CacheManager cacheManager;
 
     // Use existing test data
     private static final String TEST_EMAIL = "test@example.com";
@@ -113,6 +118,10 @@ class CacheInvalidationTest {
     @Order(2)
     @DisplayName("Adding program to profile should update cache")
     void testAddProgramUpdatesCache() throws Exception {
+        // Verify LISTEN/NOTIFY connection is alive
+        Assertions.assertTrue(cacheManager.isSubscriberConnected(),
+            "LISTEN/NOTIFY subscriber should be connected");
+
         // Add program to profile
         client.query(
             "INSERT INTO profiles_programs (profile_id, program_id) " +
@@ -125,8 +134,8 @@ class CacheInvalidationTest {
         ).execute().await().indefinitely();
         Assertions.assertTrue(dbCheck.iterator().hasNext(), "Program should be in database");
 
-        // Give cache time to update via trigger (LISTEN/NOTIFY is async)
-        Thread.sleep(2000);
+        // Wait for LISTEN/NOTIFY to propagate and cache to update
+        cacheManager.waitForNotifications(2000);
 
         // Verify cache was updated
         given()
