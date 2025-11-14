@@ -229,6 +229,10 @@ public class CacheManager {
                     profile.schoolId = row.getLong("school_id");
                     profile.isWhitelistUrl = row.getBoolean("is_whitelist_url");
 
+                    // TODO: Load from database once tracking_enabled column is added
+                    // For now, all profiles have tracking enabled by default
+                    profile.trackingEnabled = true;
+
                     // Parse JSONB domains array
                     String domainsJson = row.get(Object.class, "domains").toString();
                     profile.domains = parseDomainsFromJson(domainsJson);

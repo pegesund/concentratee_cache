@@ -112,15 +112,21 @@ public class Main {
     @Produces(MediaType.APPLICATION_JSON)
     public String getActiveProfiles(
             @PathParam("email") String email,
-            @QueryParam("expand") @DefaultValue("true") boolean expand,
-            @QueryParam("track") @DefaultValue("false") boolean track) {
-
-        // Record heartbeat if tracking is enabled
-        if (track) {
-            trackingManager.recordHeartbeat(email);
-        }
+            @QueryParam("expand") @DefaultValue("true") boolean expand) {
 
         var profileIds = cacheManager.getActiveProfilesForStudent(email);
+
+        // Automatically record heartbeat if any active profile has tracking enabled
+        if (!profileIds.isEmpty()) {
+            boolean shouldTrack = profileIds.stream()
+                .map(profileId -> cacheManager.getProfile(profileId))
+                .filter(profile -> profile != null)
+                .anyMatch(profile -> profile.trackingEnabled != null && profile.trackingEnabled);
+
+            if (shouldTrack) {
+                trackingManager.recordHeartbeat(email);
+            }
+        }
 
         if (!expand) {
             // Return just the IDs (even if empty)

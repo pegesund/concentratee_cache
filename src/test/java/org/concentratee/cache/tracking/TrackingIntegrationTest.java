@@ -59,7 +59,7 @@ class TrackingIntegrationTest {
 
     @Test
     @Order(2)
-    @DisplayName("Should record heartbeat via API with track=true")
+    @DisplayName("Should record heartbeat via API with automatic tracking")
     void testHeartbeatRecordingViaAPI() {
         // Create test data
         createTestStudent().await().indefinitely();
@@ -68,9 +68,9 @@ class TrackingIntegrationTest {
 
         sleep(500);
 
-        // Call API with track=true
+        // Call API with automatic tracking
         given()
-            .queryParam("track", "true")
+            
             .queryParam("expand", "false")
             .when().get("/cache/profiles/active/" + TEST_EMAIL)
             .then()
@@ -118,7 +118,7 @@ class TrackingIntegrationTest {
         // Send 5 heartbeats
         for (int i = 0; i < 5; i++) {
             given()
-                .queryParam("track", "true")
+                
                 .when().get("/cache/profiles/active/" + TEST_EMAIL)
                 .then()
                     .statusCode(200);
@@ -157,8 +157,8 @@ class TrackingIntegrationTest {
         sleep(500);
 
         // Send heartbeats from both students
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + email1);
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + email2);
+        given().when().get("/cache/profiles/active/" + email1);
+        given().when().get("/cache/profiles/active/" + email2);
 
         sleep(500);
 
@@ -178,7 +178,7 @@ class TrackingIntegrationTest {
 
         // Send heartbeat
         given()
-            .queryParam("track", "true")
+            
             .when().get("/cache/profiles/active/" + TEST_EMAIL)
             .then()
                 .statusCode(200);
@@ -219,7 +219,7 @@ class TrackingIntegrationTest {
         sleep(500);
 
         // Send heartbeat
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         sleep(500);
 
@@ -227,7 +227,7 @@ class TrackingIntegrationTest {
         trackingManager.rotateMinute();
 
         // Send another heartbeat after rotation
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         // Check that student has history
         var stats = trackingManager.getSessionTracking(TEST_SESSION_ID);

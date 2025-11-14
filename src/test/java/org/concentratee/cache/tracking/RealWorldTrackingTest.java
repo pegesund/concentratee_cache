@@ -61,7 +61,7 @@ class RealWorldTrackingTest {
 
         // Send 5 heartbeats quickly
         for (int i = 0; i < 5; i++) {
-            given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+            given().when().get("/cache/profiles/active/" + TEST_EMAIL);
         }
 
         // Rotate minute to lock in the data (1 active minute out of 10 total)
@@ -112,7 +112,7 @@ class RealWorldTrackingTest {
 
         // Student has NO session, only rule applies
         // Send heartbeat - should create RuleTracker
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         sleep(1000); // Wait for tracking to process
 
@@ -151,7 +151,7 @@ class RealWorldTrackingTest {
             final String email = "student" + i + "@concurrent.test";
             threads[i] = new Thread(() -> {
                 for (int j = 0; j < 20; j++) {
-                    given().queryParam("track", "true")
+                    given()
                         .when().get("/cache/profiles/active/" + email)
                         .then().statusCode(200);
                 }
@@ -183,7 +183,7 @@ class RealWorldTrackingTest {
         sleep(500);
 
         // Send heartbeat
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         // Get current minute counter BEFORE rotation
         var statsBefore = trackingManager.getSessionTracking(TEST_SESSION_ID);
@@ -193,7 +193,7 @@ class RealWorldTrackingTest {
         trackingManager.rotateMinute();
 
         // Send another heartbeat AFTER rotation
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         // Check that history was preserved
         var statsAfter = trackingManager.getSessionTracking(TEST_SESSION_ID);
@@ -218,7 +218,7 @@ class RealWorldTrackingTest {
         int initialRuleTrackerCount = trackingManager.getActiveRuleTrackerCount();
 
         // Send heartbeat - has BOTH session and rule
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         sleep(500);
 
@@ -258,7 +258,7 @@ class RealWorldTrackingTest {
         sleep(500);
 
         // Send heartbeat to create rule tracker
-        given().queryParam("track", "true").when().get("/cache/profiles/active/" + TEST_EMAIL);
+        given().when().get("/cache/profiles/active/" + TEST_EMAIL);
 
         sleep(500);
 

@@ -12,6 +12,7 @@ public class Profile {
     public Long teacherId;
     public Long schoolId;
     public Boolean isWhitelistUrl;
+    public Boolean trackingEnabled;  // TODO: Load from database once tracking_enabled column is added
 
     public Profile() {
         this.domains = new ArrayList<>();
