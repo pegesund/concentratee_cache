@@ -551,9 +551,11 @@ public class CacheManager {
             Map<String, Map<String, List<Rule>>> tempMap = new HashMap<>();
 
             for (Rule rule : rulesById.values()) {
-                if (rule.scope != null && rule.scopeValue != null) {
+                // Index all rules that have a scope, including wildcard rules (empty scope_value)
+                if (rule.scope != null) {
+                    String scopeValue = (rule.scopeValue != null) ? rule.scopeValue : "";
                     tempMap.computeIfAbsent(rule.scope, k -> new HashMap<>())
-                           .computeIfAbsent(rule.scopeValue, k -> new ArrayList<>())
+                           .computeIfAbsent(scopeValue, k -> new ArrayList<>())
                            .add(rule);
                 }
             }
