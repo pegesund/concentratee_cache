@@ -34,6 +34,8 @@ class CacheManagerTest {
     void setUp() {
         // Clean up any existing test data
         cleanupTestData().await().indefinitely();
+        // Wait for LISTEN/NOTIFY to propagate the DELETE to cache
+        sleep(600);
     }
 
     @AfterEach
@@ -426,6 +428,46 @@ class CacheManagerTest {
 
     @Test
     @Order(12)
+    @DisplayName("Cleanup should NOT remove active year-long sessions")
+    void testCleanupDoesNotRemoveActiveYearLongSessions() {
+        // Create test data
+        createTestStudent().await().indefinitely();
+        createTestProfile().await().indefinitely();
+
+        // Use a unique session ID for this test
+        Long yearLongSessionId = 99002L;
+
+        // Create a year-long session that started in the past but is still active
+        pgPool.query("""
+            INSERT INTO sessions (id, title, start_time, end_time, student_id, school_id, grade, profile_id, inserted_at, updated_at)
+            VALUES (%d, 'Year Long Session', NOW() - INTERVAL '3 months', NOW() + INTERVAL '9 months', %d, 1, 8, %d, NOW(), NOW())
+            """.formatted(yearLongSessionId, TEST_STUDENT_ID, TEST_PROFILE_ID))
+            .execute()
+            .await().indefinitely();
+
+        sleep(600);
+
+        // Verify session is in cache before cleanup
+        var sessionsBefore = cacheManager.getSessionsByEmail(TEST_EMAIL);
+        boolean foundBefore = sessionsBefore.stream().anyMatch(s -> s.id.equals(yearLongSessionId));
+        assertTrue(foundBefore, "Year-long session should be in cache before cleanup");
+
+        // Trigger cleanup
+        cacheManager.cleanupStaleData();
+
+        // Verify year-long session is STILL in cache (not removed by cleanup)
+        var sessionsAfter = cacheManager.getSessionsByEmail(TEST_EMAIL);
+        boolean foundAfter = sessionsAfter.stream().anyMatch(s -> s.id.equals(yearLongSessionId));
+        assertTrue(foundAfter, "Year-long session should STILL be in cache after cleanup - active sessions should not be removed");
+
+        // Clean up the extra session we created
+        pgPool.query("DELETE FROM sessions WHERE id = " + yearLongSessionId)
+            .execute()
+            .await().indefinitely();
+    }
+
+    @Test
+    @Order(13)
     @DisplayName("Adding categories to profile should update cache via LISTEN/NOTIFY")
     void testAddingCategoriesUpdatesCache() {
         // Create test data

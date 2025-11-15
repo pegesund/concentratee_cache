@@ -1207,14 +1207,16 @@ public class CacheManager {
         LocalDate today = LocalDate.now();
         LocalDateTime now = LocalDateTime.now();
 
-        // Clean up old sessions (keep only today's sessions)
+        // Clean up expired sessions (sessions that have ended, not sessions that started before today)
         int removedSessions = 0;
         Iterator<Map.Entry<Long, Session>> sessionIterator = sessionsById.entrySet().iterator();
         while (sessionIterator.hasNext()) {
             Map.Entry<Long, Session> entry = sessionIterator.next();
             Session session = entry.getValue();
 
-            if (session.startTime != null && session.startTime.toLocalDate().isBefore(today)) {
+            // Remove sessions that have actually ended (expired), not sessions that started in the past
+            // This allows year-long sessions to remain in cache as long as they are still active
+            if (session.endTime != null && session.endTime.isBefore(now)) {
                 removeSessionFromIndexes(entry.getKey(), session);
                 sessionIterator.remove();
                 removedSessions++;
