@@ -41,9 +41,10 @@ public class CacheManager {
     private final ConcurrentHashMap<Long, Session> sessionsById = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Rule> rulesById = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Profile> profilesById = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, String> studentsById = new ConcurrentHashMap<>(); // studentId -> email
+    private final ConcurrentHashMap<Long, Student> studentsById = new ConcurrentHashMap<>(); // studentId -> Student
 
     // Derived indexes for fast lookups
+    private final ConcurrentHashMap<String, Student> studentsByEmail = new ConcurrentHashMap<>(); // email -> Student
     private final ConcurrentHashMap<String, List<Session>> sessionsByEmail = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, List<Session>> sessionsByProfile = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, List<Rule>>> rulesByScopeAndValue = new ConcurrentHashMap<>();
@@ -192,7 +193,7 @@ public class CacheManager {
 
     private Uni<Void> loadStudents() {
         String sql = """
-            SELECT id, feide_email
+            SELECT id, feide_email, school_id, class_id
             FROM students
             """;
 
@@ -202,8 +203,17 @@ public class CacheManager {
                 for (Row row : rows) {
                     Long id = row.getLong("id");
                     String email = row.getString("feide_email");
+                    Long schoolId = row.getLong("school_id");
+                    Long classId = row.getLong("class_id");
+
                     if (email != null) {
-                        studentsById.put(id, email);
+                        Student student = new Student(id, email, schoolId);
+                        student.classId = classId;
+                        // Note: grade is not stored in students table, only in sessions
+                        student.grade = null;
+
+                        studentsById.put(id, student);
+                        studentsByEmail.put(email, student);
                         count++;
                     }
                 }
@@ -507,7 +517,8 @@ public class CacheManager {
                     session.percentage = row.getDouble("percentage");
 
                     // Look up email from students hash
-                    session.studentEmail = studentsById.get(session.studentId);
+                    Student student = studentsById.get(session.studentId);
+                    session.studentEmail = student != null ? student.email : null;
 
                     sessionsById.put(session.id, session);
                     count++;
@@ -789,10 +800,12 @@ public class CacheManager {
         try {
             if (payload.contains("\"operation\":\"DELETE\"")) {
                 Long id = extractId(payload);
-                String oldEmail = studentsById.remove(id);
-                if (oldEmail != null) {
+                Student oldStudent = studentsById.remove(id);
+                if (oldStudent != null) {
+                    // Remove from email index
+                    studentsByEmail.remove(oldStudent.email);
                     // Remove all sessions for this student from sessionsByEmail
-                    sessionsByEmail.remove(oldEmail);
+                    sessionsByEmail.remove(oldStudent.email);
                     // Update all sessions in sessionsById that had this student
                     sessionsById.values().stream()
                         .filter(s -> s.studentId != null && s.studentId.equals(id))
@@ -1035,7 +1048,8 @@ public class CacheManager {
                     session.percentage = row.getDouble("percentage");
 
                     // Look up email from students hash instead of JOIN
-                    session.studentEmail = studentsById.get(session.studentId);
+                    Student student = studentsById.get(session.studentId);
+                    session.studentEmail = student != null ? student.email : null;
 
                     sessionsById.put(session.id, session);
                     if (session.studentEmail != null) {
@@ -1053,21 +1067,36 @@ public class CacheManager {
 
     private Uni<Void> loadStudentById(Long id) {
         String sql = """
-            SELECT id, feide_email
+            SELECT id, feide_email, school_id, class_id
             FROM students
             WHERE id = $1
             """;
 
         return client.preparedQuery(sql).execute(io.vertx.mutiny.sqlclient.Tuple.of(id))
             .onItem().transform(rows -> {
-                String oldEmail = studentsById.get(id);
+                Student oldStudent = studentsById.get(id);
+                String oldEmail = oldStudent != null ? oldStudent.email : null;
 
                 for (Row row : rows) {
                     Long studentId = row.getLong("id");
                     String newEmail = row.getString("feide_email");
+                    Long schoolId = row.getLong("school_id");
+                    Long classId = row.getLong("class_id");
 
-                    // Update studentsById hash
-                    studentsById.put(studentId, newEmail);
+                    // Create and store new Student object
+                    Student student = new Student(studentId, newEmail, schoolId);
+                    student.classId = classId;
+                    student.grade = null; // grade not in students table
+
+                    studentsById.put(studentId, student);
+
+                    // Update email index
+                    if (oldEmail != null) {
+                        studentsByEmail.remove(oldEmail);
+                    }
+                    if (newEmail != null) {
+                        studentsByEmail.put(newEmail, student);
+                    }
 
                     // Update all sessions that reference this student
                     List<Session> affectedSessions = new ArrayList<>();
@@ -1252,16 +1281,23 @@ public class CacheManager {
 
         // Get student's sessions
         List<Session> sessions = getSessionsByEmail(studentEmail);
-        if (sessions.isEmpty()) {
-            return activeProfiles;
-        }
 
-        // Use first session to get student attributes for rule matching
-        Session anySession = sessions.get(0);
-        Long studentId = anySession.studentId;
-        Long schoolId = anySession.schoolId;
-        Integer grade = anySession.grade;
-        Long classId = anySession.classId;
+        // Get student attributes for rule matching
+        // First try to get from studentsByEmail cache (has school_id, class_id from students table)
+        Student student = studentsByEmail.get(studentEmail);
+        Long studentId = student != null ? student.id : null;
+        Long schoolId = student != null ? student.schoolId : null;
+        Integer grade = null; // grade only available from sessions
+        Long classId = student != null ? student.classId : null;
+
+        // If we have sessions, also extract grade (which is only in sessions, not students table)
+        if (!sessions.isEmpty()) {
+            Session anySession = sessions.get(0);
+            if (studentId == null) studentId = anySession.studentId;
+            if (schoolId == null) schoolId = anySession.schoolId;
+            if (classId == null) classId = anySession.classId;
+            grade = anySession.grade;  // grade only comes from sessions
+        }
 
         // 1. Check session-based profiles
         for (Session session : sessions) {
@@ -1283,55 +1319,58 @@ public class CacheManager {
 
         // School-wide rule
         if (schoolId != null) {
-            // Check both specific school rules and wildcard school rules (empty scope_value)
+            // Check specific school rules
             List<Rule> schoolRules = getRulesByScope("School", String.valueOf(schoolId));
-            List<Rule> wildcardSchoolRules = getRulesByScope("School", "");
-
             for (Rule rule : schoolRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
             }
-            for (Rule rule : wildcardSchoolRules) {
-                if (rule.isActiveNow() && rule.profileId != null) {
-                    activeProfiles.add(rule.profileId);
-                }
+        }
+
+        // ALWAYS check wildcard school rules (empty scope_value) - they apply to ALL students
+        List<Rule> wildcardSchoolRules = getRulesByScope("School", "");
+        for (Rule rule : wildcardSchoolRules) {
+            if (rule.isActiveNow() && rule.profileId != null) {
+                activeProfiles.add(rule.profileId);
             }
         }
 
         // Grade-level rule
         if (grade != null) {
-            // Check both specific grade rules and wildcard grade rules (empty scope_value)
+            // Check specific grade rules
             List<Rule> gradeRules = getRulesByScope("Grade", String.valueOf(grade));
-            List<Rule> wildcardGradeRules = getRulesByScope("Grade", "");
-
             for (Rule rule : gradeRules) {
-                if (rule.isActiveNow() && rule.profileId != null) {
-                    activeProfiles.add(rule.profileId);
-                }
-            }
-            for (Rule rule : wildcardGradeRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
             }
         }
 
+        // ALWAYS check wildcard grade rules (empty scope_value) - they apply to ALL students
+        List<Rule> wildcardGradeRules = getRulesByScope("Grade", "");
+        for (Rule rule : wildcardGradeRules) {
+            if (rule.isActiveNow() && rule.profileId != null) {
+                activeProfiles.add(rule.profileId);
+            }
+        }
+
         // Class-specific rule
         if (classId != null) {
-            // Check both specific class rules and wildcard class rules (empty scope_value)
+            // Check specific class rules
             List<Rule> classRules = getRulesByScope("Class", String.valueOf(classId));
-            List<Rule> wildcardClassRules = getRulesByScope("Class", "");
-
             for (Rule rule : classRules) {
                 if (rule.isActiveNow() && rule.profileId != null) {
                     activeProfiles.add(rule.profileId);
                 }
             }
-            for (Rule rule : wildcardClassRules) {
-                if (rule.isActiveNow() && rule.profileId != null) {
-                    activeProfiles.add(rule.profileId);
-                }
+        }
+
+        // ALWAYS check wildcard class rules (empty scope_value) - they apply to ALL students
+        List<Rule> wildcardClassRules = getRulesByScope("Class", "");
+        for (Rule rule : wildcardClassRules) {
+            if (rule.isActiveNow() && rule.profileId != null) {
+                activeProfiles.add(rule.profileId);
             }
         }
 
